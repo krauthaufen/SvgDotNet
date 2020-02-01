@@ -147,28 +147,26 @@ module private Extensions =
                 | _ ->
                     style
 
-            let x =
-                match node.TryGetLength("x") with
-                | Some x -> x
-                | None -> Length.Zero
-            let y = 
-                match node.TryGetLength("y") with
-                | Some y -> y
-                | None -> Length.Zero
-            
             let id =
                 node.TryGetAttribute "id"
 
             {
                 id = id
                 style = style
-                x = x
-                y = y
+                x = node.TryGetLength("x")
+                y = node.TryGetLength("y")
+                dx = node.TryGetLength("dx")
+                dy = node.TryGetLength("dy")
             }
 
 
 
 module SvgParser = 
+    let private whitespace = System.Text.RegularExpressions.Regex @"[ \t\r\n]+"
+    
+    let private cleanText (text : string) =
+        whitespace.Replace(text, " ").Trim()
+
     let rec private visit (node : XElement) : option<SvgNode> =
         let tag = node.Name.LocalName.ToLower()
         let children = node.Elements() |> Seq.toList
@@ -210,7 +208,7 @@ module SvgParser =
                             let props = e.GetProps()
                             Some { 
                                 props = props
-                                content = e.Value.Trim [| ' '; '\t'; '\r'; '\n' |]
+                                content = cleanText e.Value
                             }
                         else    
                             Log.warn "bad text-span: %A" e
@@ -218,7 +216,7 @@ module SvgParser =
                     | :? XText as e ->
                         Some { 
                             props = SvgProps.empty
-                            content = e.Value.Trim [| ' '; '\t'; '\r'; '\n' |]
+                            content = cleanText e.Value
                         }
                     | e ->
                         Log.warn "bad text-span: %A" e

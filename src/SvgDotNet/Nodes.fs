@@ -6,8 +6,10 @@ open SvgDotNet
 type SvgProps =
     {
         id          : option<string>
-        x           : Length
-        y           : Length
+        x           : option<Length>
+        y           : option<Length>
+        dx          : option<Length>
+        dy          : option<Length>
         style       : Style
     }
 
@@ -16,8 +18,10 @@ module SvgProps =
     let empty =
         { 
             id = None
-            x = Length.Zero
-            y = Length.Zero
+            x = None
+            y = None
+            dx = None
+            dy = None
             style = Style.none
         }
 

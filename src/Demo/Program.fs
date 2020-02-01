@@ -11,13 +11,14 @@ open SvgDotNet
 type State =
     {
         style : Style
+        groupTrafo : Trafo2d
+        trafoInGroup : Trafo2d
         trafo : Trafo2d
         width : float
         height : float
         fontSize : float
         viewBox : Box2d
     }
-
 
 [<AutoOpen>]
 module private Helpers =
@@ -55,10 +56,47 @@ module Transform =
 
 
 module SvgProps =
-    let trafo (state : State) (props : SvgProps) =
-        let trans = Trafo2d.Translation(props.x.X state, props.y.Y state)
-        Transform.ofStack state props.style.transform * 
-        trans
+    let adjustTrafo (isGroup : bool) (state : State) (props : SvgProps) =
+        let myTrafo = Transform.ofStack state props.style.transform
+
+        let local2Group = state.trafoInGroup //state.trafo * state.lastGroupTrafo.Inverse
+
+        let abs =
+            let getTrafo (dir : V2d) (x : Length) (y : Length) =
+                let currentInGroup = local2Group.Forward.TransformPos(V2d.Zero)
+                let targetInGroup = V2d(x.X state, y.Y state)
+                let delta = dir * (targetInGroup - currentInGroup)
+                local2Group *
+                Trafo2d.Translation delta *
+                local2Group.Inverse
+
+            match props.x, props.y with
+            | Some x, Some y -> getTrafo V2d.II x y
+            | Some x, None -> getTrafo V2d.IO x Length.Zero
+            | None, Some y -> getTrafo V2d.OI Length.Zero y
+            | None, None -> Trafo2d.Identity
+
+        let delta = 
+            match props.dx, props.dy with
+            | Some dx, Some dy -> Trafo2d.Translation(dx.X state, dy.Y state)
+            | Some dx, None -> Trafo2d.Translation(dx.X state, 0.0)
+            | None, Some dy -> Trafo2d.Translation(0.0, dy.Y state)
+            | None, None -> Trafo2d.Identity
+
+        let delta = abs * delta * myTrafo
+
+        if isGroup then
+            let mine = delta * state.trafo
+            { state with
+                trafo = mine
+                groupTrafo = mine
+                trafoInGroup = Trafo2d.Identity
+            }
+        else
+            { state with
+                trafo = delta * state.trafo
+                trafoInGroup = delta * state.trafoInGroup
+            }
 
 [<EntryPoint;STAThread>]
 let main argv = 
@@ -70,49 +108,51 @@ let main argv =
             M23d.op_Explicit t.Forward
 
         let rec toShapeList (state : State) (n : SvgNode) =
-            let trafo = 
-                SvgProps.trafo state n.Props *
-                state.trafo
-
+            //let trafo = SvgProps.newTrafo state n.Props
             let style = state.style + n.Props.style
+            let state = { state with style = style }
 
-            let state =
-                match style.fontSize with
-                | Some s -> { state with fontSize = s.Y state }
-                | _ -> state
+            let inline getState (isGroup : bool)  (state : State) (props : SvgProps) =
+                let state = 
+                    match style.fontSize with
+                    | Some size -> { state with fontSize = size.Y state }
+                    | _ -> state
+                let state = SvgProps.adjustTrafo isGroup state props
+                state
 
-            let state =
-                { state with trafo = trafo }
+            
 
             match n with
             | Rect(_, w, h) ->  
+                let state = getState false state n.Props
                 let size = V2d(w.X state, h.Y state)
                 [
                     match style.fill with
                     | Fill.Color color -> 
                         ConcreteShape.fillRectangle color (Box2d.FromMinAndSize(V2d.Zero, size))
-                        |> ConcreteShape.transform (m23 trafo)
+                        |> ConcreteShape.transform (m23 state.trafo)
                     | _ ->  
                         ()
                     match style.stroke, style.strokeWidth with
                     | Stroke.Color color, Some len when len.Value > 0.0 ->
                         ConcreteShape.rectangle color len.Value (Box2d.FromMinAndSize(V2d.Zero, size))
-                        |> ConcreteShape.transform (m23 trafo)
+                        |> ConcreteShape.transform (m23 state.trafo)
                     | _ ->  
                         ()
                 ]
 
             | Group(_, children) ->
+                let state = getState true state n.Props
                 children |> List.collect (fun c ->
-                    toShapeList { state with style = style } c
+                    toShapeList state c
                 )
             | Text(_, spans) ->
-                let mutable index = 0
-                let mutable offset = 0.0
-                let mutable lastAdvance = 0.0
+                let parentState = getState false state n.Props
+
+                let mutable state = parentState
                 spans |> List.collect (fun s ->
                     let style = style + s.props.style
-
+                    state <- getState false { state with style = style } s.props
 
                     let font =
                         match style.fontFamily with
@@ -151,43 +191,68 @@ let main argv =
                         }
 
 
-                    let list = cfg.Layout s.content
+                    let shapes =
+                        let list = cfg.Layout s.content
+                        let renderTrafo =   
+                            let m4 = list.renderTrafo.Forward
+                            let m = M33d.FromRows(m4.R0.XYW, m4.R1.XYW, V3d.OOI)
+                            Trafo2d(m, m.Inverse)
+                            
+                        let trans =
+                            Trafo2d.Translation(-list.bounds.Min.X, 0.0) 
 
-                    // TODO: here be dragons!!
-                    let whiteSpaceSize = cfg.font.Spacing * fontSize
-                    let advance = whiteSpaceSize * 0.37 + letterSpacing * fontSize
-                    if index > 0 then
-                        offset <- offset + lastAdvance
+                        let trafo =
+                            renderTrafo * trans * Trafo2d.Scale(fontSize, -fontSize)
+
+                        list.concreteShapes |> List.map (fun s ->
+                            s |> ConcreteShape.transform (m23 trafo)
+                        )
+
+
+                    let shapes =
+                        let rec adjust (offset : float) (str : string) (idx : int) (g : list<ConcreteShape>) =
+                            if idx >= str.Length then
+                                let t = Trafo2d.Translation(offset, 0.0) |> m23
+                                g |> List.map (ConcreteShape.transform t)
+                            else
+                                let c = str.[idx]
+                                match c with
+                                | ' ' ->
+                                    adjust (offset + wordSpacing + letterSpacing) str (idx + 1) g
+                                | '\t' ->
+                                    adjust (offset + 4.0 * (wordSpacing + letterSpacing)) str (idx + 1) g
+                                | '\r' ->
+                                    adjust offset str (idx + 1) g
+                                | '\n' ->
+                                    adjust 0.0 str (idx + 1) g
+                                | _ ->
+                                    match g with
+                                    | g :: rest ->
+                                        let t = Trafo2d.Translation(offset, 0.0) |> m23
+                                        ConcreteShape.transform t g :: adjust (offset + letterSpacing) str (idx + 1) rest
+                                    | [] ->
+                                        []
+                                    
+                                    
+                        adjust 0.0 s.content 0 shapes
                         
-                    index <- index + 1
-                    lastAdvance <- advance
+                    let bounds = shapes |> Seq.collect (fun s -> s.bounds.ComputeCorners() :> seq<_>) |> Box2d
+                    let offset = bounds.Max.X
 
-                    let bounds = 
-                        let size =
-                            list.bounds.Size +
-                            V2d(letterSpacing * float (s.content.Length - 1), 0.0)
-                        Box2d.FromMinAndSize(list.bounds.Min, size)
+                    let whiteSpaceSize = cfg.font.Spacing * fontSize
+                    let advance = whiteSpaceSize + letterSpacing * fontSize
 
-                    let toParentTrafo = 
-                        Trafo2d.Translation(-bounds.Min.X, 0.0) * 
-                        Trafo2d.Scale(fontSize, -fontSize) * 
-                        Trafo2d.Translation(offset, 0.0)
+                    let glyphTrafo = state.trafo
 
-                    let p = toParentTrafo.Forward.TransformPos(V2d(bounds.Max.X, 0.0))
+                    let trans = Trafo2d.Translation(offset + advance * 1.25, 0.0)
+                    state <- 
+                        { state with 
+                            trafo = trans * state.trafo 
+                            trafoInGroup = trans * state.trafoInGroup
+                        }
 
-                    offset <- p.X
-
-                    let renderTrafo =   
-                        let m4 = list.renderTrafo.Forward
-                        let m = M33d.FromRows(m4.R0.XYW, m4.R1.XYW, V3d.OOI)
-                        Trafo2d(m, m.Inverse)
-
-                    let glyphTrafo =
-                        renderTrafo * toParentTrafo * trafo
-
-                    list.concreteShapes |> List.mapi (fun i s ->
-                        let t = if i > 0 && letterSpacing <> 0.0 then Trafo2d.Translation(letterSpacing * float i, 0.0) * glyphTrafo else glyphTrafo
-                        s |> ConcreteShape.transform (m23 t)
+                    shapes |> List.map (fun s ->
+                        s |> ConcreteShape.transform (m23 glyphTrafo)
                     )
 
                 )
@@ -206,6 +271,8 @@ let main argv =
                     width = svg.width.ToPixels(16.0, viewBox.Size.X)
                     height = svg.height.ToPixels(16.0, viewBox.Size.Y)
                     trafo = Trafo2d.Identity
+                    groupTrafo = Trafo2d.Identity
+                    trafoInGroup = Trafo2d.Identity
                     style = Style.initial
                     fontSize = 16.0
                 }
