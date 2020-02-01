@@ -29,7 +29,6 @@ type Span =
     }
 
 type SvgNode =
-    //| Root of svg : Svg
     | Group of props : SvgProps * children : list<SvgNode>
     | Rect of props : SvgProps * w : Length * height : Length
     | Path of props : SvgProps * path : string // TODO
@@ -37,7 +36,6 @@ type SvgNode =
 
     member x.Props =
         match x with
-        //| Root svg -> svg.props
         | Group(p,_)
         | Rect(p,_,_)
         | Path(p,_)

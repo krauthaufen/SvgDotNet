@@ -109,7 +109,7 @@ let main argv =
             | Text(_, spans) ->
                 let mutable index = 0
                 let mutable offset = 0.0
-                let mutable lastSpacing = 0.0
+                let mutable lastAdvance = 0.0
                 spans |> List.collect (fun s ->
                     let style = style + s.props.style
 
@@ -123,9 +123,19 @@ let main argv =
 
                     let fontSize =
                         match style.fontSize with
-                        | Some len -> len.ToPixels(16.0, 100.0)
+                        | Some len -> len.ToPixels(state.fontSize, state.viewBox.SizeY)
                         | None -> 16.0
                     
+                    let letterSpacing =
+                        match style.letterSpacing with
+                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY) / fontSize
+                        | None -> 0.0
+
+                    let wordSpacing =
+                        match style.wordSpacing with
+                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY) / fontSize
+                        | None -> 0.0
+
                     let color =
                         match style.fill with
                         | Fill.Color c -> c
@@ -143,23 +153,28 @@ let main argv =
 
                     let list = cfg.Layout s.content
 
+                    // TODO: here be dragons!!
                     let whiteSpaceSize = cfg.font.Spacing * fontSize
-
+                    let advance = whiteSpaceSize * 0.37 + letterSpacing * fontSize
                     if index > 0 then
-                        // TODO: here be dragons
-                        let avg = 0.99 * lastSpacing + 0.01 * whiteSpaceSize
-                        offset <- offset + avg * 0.37
+                        offset <- offset + lastAdvance
+                        
+                    index <- index + 1
+                    lastAdvance <- advance
 
-                    let svgCorrection = 
-                        Trafo2d.Scale(fontSize, -fontSize)
+                    let bounds = 
+                        let size =
+                            list.bounds.Size +
+                            V2d(letterSpacing * float (s.content.Length - 1), 0.0)
+                        Box2d.FromMinAndSize(list.bounds.Min, size)
 
                     let toParentTrafo = 
-                        Trafo2d.Translation(-list.bounds.Min.X, 0.0) * svgCorrection * Trafo2d.Translation(offset, 0.0)
+                        Trafo2d.Translation(-bounds.Min.X, 0.0) * 
+                        Trafo2d.Scale(fontSize, -fontSize) * 
+                        Trafo2d.Translation(offset, 0.0)
 
-                    let p = toParentTrafo.Forward.TransformPos(V2d(list.bounds.Max.X, 0.0))
+                    let p = toParentTrafo.Forward.TransformPos(V2d(bounds.Max.X, 0.0))
 
-                    index <- index + 1
-                    lastSpacing <- whiteSpaceSize
                     offset <- p.X
 
                     let renderTrafo =   
@@ -170,8 +185,9 @@ let main argv =
                     let glyphTrafo =
                         renderTrafo * toParentTrafo * trafo
 
-                    list.concreteShapes |> List.map (fun s ->
-                        s |> ConcreteShape.transform (m23 glyphTrafo)
+                    list.concreteShapes |> List.mapi (fun i s ->
+                        let t = if i > 0 && letterSpacing <> 0.0 then Trafo2d.Translation(letterSpacing * float i, 0.0) * glyphTrafo else glyphTrafo
+                        s |> ConcreteShape.transform (m23 t)
                     )
 
                 )
