@@ -106,6 +106,7 @@ module Stroke =
 
     let rec private tryClip (a : PathSegment) (b : PathSegment) : option<option<PathSegment> * option<PathSegment>> =
         match a, b with
+
         | Line(a0, a1), Line(b0, b1) ->
             let ra = Ray2d(a0, a1 - a0)
             let rb = Ray2d(b0, b1 - b0)
@@ -119,12 +120,43 @@ module Stroke =
                 None
 
         | Line(a1, b1), Arc(alpha0, alpha1, e) ->
+            let o = a1
+            let d = b1 - a1
+            // o + t*d = c + a0*cos(p) + a1*sin(p)
+
+            // diff := o - c
+            // diff = a0*cos(p)+a1*cos(p)-t*d
+
+            // diff.X = a0.X*cos(p)+a1.X*cos(p)-t*d.X
+            // diff.Y = a0.Y*cos(p)+a1.Y*cos(p)-t*d.Y
             
-            //e.GetAlpha
+            // diff.X*d.Y = a0.X*d.Y*cos(p)+a1.X*d.Y*sin(p)-t*d.X*d.Y
+            // diff.Y*d.X = a0.Y*d.X*cos(p)+a1.Y*d.X*sin(p)-t*d.X*d.Y
 
+            // diff.X*d.Y - diff.Y*d.X == 
+            // a0.X*d.Y*cos(p) - a0.Y*d.X*cos(p) + a1.X*d.Y*sin(p) - a1.Y*d.X*sin(p)
+            
+            // diff.X*d.Y-diff.Y*d.X = cos(p) * (a0.X*d.Y - a0.Y*d.X) + sin(p) * (a1.X*d.Y - a1.Y*d.X)
 
-            // intersect line with ellipse and check t/phi! (2 intersections)
-            failwith ""
+            let diff = o - e.Center
+            let va = diff.X * d.Y - diff.Y * d.X
+            let vb = e.Axis0.X*d.Y - e.Axis0.Y*d.X
+            let vc = e.Axis1.X*d.Y - e.Axis1.Y*d.X
+            // a = cos(t)*b + sin(t)*c
+
+            let div = va + vb
+            let q2 = vb*vb + vc*vc - va*va
+            if q2 < 1E-8 then
+                let p0 = PathSegment.startPoint b
+                Some(PathSegment.tryLine a1 p0, Some b)
+            else
+                let q = sqrt q2
+                let t1 = 2.0 * atan2 (vc - q) div
+                let t2 = 2.0 * atan2 (vc + q) div
+                Log.warn "%A %A %A %A" alpha0 alpha1 t1 t2
+
+                // intersect line with ellipse and check t/phi! (2 intersections)
+                failwith ""
             
         | Line(a1, b1), Bezier2(p0, pc, p1) ->
             // shouldn't be too hard (2 intersections)
@@ -136,7 +168,7 @@ module Stroke =
             
         | Arc(a0, a1, ae), Arc(b0, b1, be) ->
             // shouldn't be too hard (2 intersections)
-            failwith ""
+            None
 
         | Arc(a0, a1, ae), Bezier2(b0, b1, b2) ->
             // no idea????
@@ -194,42 +226,19 @@ module Stroke =
                 PathSegment.tryArcSegment p00 p0p pStart
             ]
 
-    let private offset (w : float) (p : PathSegment) =
-        match p with
-        | Line(p0, p1) ->
-            let d = Vec.normalize (p1 - p0)
-            let n = V2d(-d.Y, d.X)
-            PathSegment.line (p0+w*n) (p1+w*n)
-
-        | Arc(a, b, e) ->
-            let r0 = e.Axis0.Length
-            let r1 = e.Axis1.Length
-            let d0 = e.Axis0 / r0
-            let d1 = e.Axis1 / r1
-            PathSegment.arc a b (Ellipse2d(e.Center, d0 * (r0 + w), d1 * (r1 + w)))
-
-        | Bezier2(p0, p1, p2) ->
-            let n0 = PathSegment.normal 0.0 p
-            let n1 = PathSegment.normal 0.5 p
-            let n2 = PathSegment.normal 1.0 p
-            PathSegment.bezier2 (p0+w*n0) (p1+w*n1) (p2+w*n2)
-
-        | Bezier3(p0, p1, p2, p3)  ->
-            failwith "bezier3 not handled"
-
     let private joinSegments (style : LineJoin) (miterLimit : float) (a : PathSegment) (b : PathSegment) =
-        match tryClip a b with
-        | Some(a, b) -> 
-            [a], b.Value
-        | None ->
-            let pa = PathSegment.endPoint a
-            let ta = PathSegment.tangent 1.0 a
-            let ra = Ray2d(pa, ta)
 
-            let pb = PathSegment.startPoint b
-            let tb = PathSegment.tangent 0.0 b
-            let rb = Ray2d(pb, -tb)
+        let pa = PathSegment.endPoint a
+        let ta = PathSegment.tangent 1.0 a
+        let ra = Ray2d(pa, ta)
 
+        let pb = PathSegment.startPoint b
+        let tb = PathSegment.tangent 0.0 b
+        let rb = Ray2d(pb, -tb)
+
+        if Fun.ApproximateEquals(pa, pb, 1E-8) then
+            [Some a]
+        else
             let mutable t = 0.0
             if ra.Intersects(rb, &t) && t > 0.0 then
                 let px = ra.GetPointOnRay t
@@ -258,15 +267,133 @@ module Stroke =
                         ]
 
                     | LineJoin.Round ->
-                        [
-                            Some a
-                            PathSegment.tryArcSegment pa px pb
-                        ]
+                        let d0 = px - pa |> Vec.normalize
+                        let d1 = pb - pa |> Vec.normalize
+                        let angle = asin (clamp -1.0 1.0 (d0.X * d1.Y - d0.Y * d1.X))
+                        if Fun.IsTiny(angle, 1.0E-8) then
+                            [
+                                Some a
+                                PathSegment.tryLine pa pb
+                            ]
+                        else
+                            [
+                                Some a
+                                PathSegment.tryArcSegment pa px pb
+                            ]
                             
 
-                elements, b
+                elements
             else
-                [Some a], b
+                [Some a]
+
+
+    let private appendOffset (style : LineJoin) (miterLimit : float) (w : float) (current : System.Collections.Generic.List<PathSegment>) (p : PathSegment) =
+        match p with
+        | Line(p0, p1) ->
+            let dir = p1 - p0
+            let len = Vec.length dir
+            let d = dir / len
+            let n = V2d(-d.Y, d.X)
+            let l = Line2d(p0 + n * w, p1 + n * w)
+            
+
+            if current.Count > 0 then
+                let inline isContained p = 
+                    let t = Vec.dot (p - p0) d / len
+                    t >= 0.0 && t <= 1.0 &&
+                    Vec.dot (p - l.P0) n <= 0.0
+
+                let mutable last = current.[current.Count - 1]
+
+                while current.Count > 1 && isContained (PathSegment.startPoint last) && isContained (PathSegment.endPoint last) do   
+                    current.RemoveAt(current.Count - 1)
+                    last <- current.[current.Count - 1]
+
+
+                let o = PathSegment.line l.P0 l.P1
+                match tryClip last o with
+                | Some (nl, np) ->
+                    match nl with
+                    | Some nl -> current.[current.Count - 1] <- nl
+                    | None -> current.RemoveAt (current.Count - 1)
+                    match np with
+                    | Some np -> current.Add np
+                    | None -> ()
+                | None ->
+                    let add = joinSegments style miterLimit last o
+                    add |> List.iter (function Some v -> current.Add v | None -> ())
+                    current.Add o
+                    
+
+
+            else
+                match PathSegment.tryLine l.P0 l.P1 with
+                | Some l -> current.Add l
+                | None -> ()
+
+        | Arc(a, b, e) ->
+            let r0 = e.Axis0.Length
+            let r1 = e.Axis1.Length
+            let d0 = e.Axis0 / r0
+            let d1 = e.Axis1 / r1
+            match PathSegment.tryArc a b (Ellipse2d(e.Center, d0 * (r0 + w), d1 * (r1 + w))) with
+            | Some l -> current.Add l
+            | None -> ()
+
+        | Bezier2(p0, p1, p2) ->
+            let n0 = PathSegment.normal 0.0 p
+            let n1 = PathSegment.normal 0.5 p
+            let n2 = PathSegment.normal 1.0 p
+            match PathSegment.tryBezier2 (p0+w*n0) (p1+w*n1) (p2+w*n2) with
+            | Some l -> current.Add l
+            | None -> ()
+
+        | Bezier3(p0, p1, p2, p3)  ->
+            failwith "bezier3 not handled"
+
+    let private offsetPath (style : LineJoin) (miterLimit : float) (w : float) (p : Path) =
+        let input = Path.toArray p
+        let arr = System.Collections.Generic.List<PathSegment>()
+        input |> Array.iter (appendOffset style miterLimit w arr)
+
+        // repair colinear and epsilon gaps
+        let result = System.Collections.Generic.List<PathSegment>()
+        for s in arr do
+            if result.Count > 0 then
+                match s with
+                | Line(p2, p3) ->
+                    let last = result.[result.Count-1]
+                    match last with
+                    | Line(p0, p1) ->
+                        let tri = Triangle2d(p0, p1, p3)
+                        if tri.Area.IsTiny(1E-5) then
+                            result.[result.Count-1] <- PathSegment.line p0 p3
+                        elif Fun.ApproximateEquals(p1, p2, 1E-6) then
+                            let pm = (p1 + p2) / 2.0
+                            result.[result.Count-1] <- PathSegment.line p0 pm
+                            result.Add(PathSegment.line pm p3)
+                        else
+                            result.Add s
+                    | _ ->
+                        let pe = PathSegment.endPoint last
+                        if Fun.ApproximateEquals(pe, p2, 1E-6) then
+                            result.Add(PathSegment.line pe p3)
+                        else
+                            result.Add s
+                | _ ->
+                    result.Add s
+            else
+                result.Add s
+
+
+        //let att = result |> Seq.choose (function Line(_, p1) -> Some (sprintf "%.5f,%.5f" p1.X p1.Y) | _ -> None) |> String.concat " "
+        //let s = PathSegment.startPoint result.[0]
+
+        //printfn "<polyline transform=\"translate(60,60)\" style=\"stroke-linejoin:bevel;stroke-linecap:butt;fill:none;stroke:black;stroke-width:1px\" points=\"%.5f,%.5f %s\" />" s.X s.Y att 
+
+
+        result.ToArray()
+
 
 
 
@@ -296,16 +423,17 @@ module Stroke =
             )
 
             do
-                let comp = Path.toArray path |> Array.map (offset s)
-                for i in 0 .. comp.Length - 1 do
-                    let c = comp.[i]
-                    if i < comp.Length - 1 then 
-                        let next = comp.[i+1]
-                        let segs, nn = joinSegments join miterLimit c next
-                        add segs
-                        comp.[i+1] <- nn
-                    else
-                        add [ Some c ]
+                let comp = offsetPath join miterLimit s path
+                add (comp |> Array.toList |> List.map Some)
+                //for i in 0 .. comp.Length - 1 do
+                //    let c = comp.[i]
+                //    if i < comp.Length - 1 then 
+                //        let next = comp.[i+1]
+                //        let segs, nn = joinSegments join miterLimit c next
+                //        add segs
+                //        comp.[i+1] <- nn
+                //    else
+                //        add [ Some c ]
 
 
             add (
@@ -315,16 +443,17 @@ module Stroke =
             )
                 
             do
-                let comp = Path.toArray path |> Array.rev |> Array.map (PathSegment.reverse >> offset s)
-                for i in 0 .. comp.Length - 1 do
-                    let c = comp.[i]
-                    if i < comp.Length - 1 then 
-                        let next = comp.[i+1]
-                        let segs, nn = joinSegments join miterLimit c next
-                        add segs
-                        comp.[i+1] <- nn
-                    else
-                        add [ Some c ]
+                let comp = offsetPath join miterLimit s (Path.reverse path)
+                add (comp |> Array.toList |> List.map Some)
+                //for i in 0 .. comp.Length - 1 do
+                //    let c = comp.[i]
+                //    if i < comp.Length - 1 then 
+                //        let next = comp.[i+1]
+                //        let segs, nn = joinSegments join miterLimit c next
+                //        add segs
+                //        comp.[i+1] <- nn
+                //    else
+                //        add [ Some c ]
 
             Path.ofSeq segments
 
@@ -426,6 +555,9 @@ let main argv =
 
                     let miterLimit = defaultArg style.miterLimit 4.0
                     let path = Stroke.outsetPath w.Value style.lineCap style.lineJoin miterLimit path
+
+                    
+
                     [ ConcreteShape.ofPath state.trafo.Forward color path ]
 
 
@@ -475,6 +607,11 @@ let main argv =
                     let miterLimit = defaultArg style.miterLimit 4.0
                     let path = Path.ofList (traverse None pts)
                     let path = Stroke.outsetPath w.Value style.lineCap style.lineJoin miterLimit path
+
+                    
+                    //let path = Stroke.outsetPath 1.0 style.lineCap style.lineJoin miterLimit path
+
+
                     [ ConcreteShape.ofPath state.trafo.Forward color path ]
                 | _ ->
                     []

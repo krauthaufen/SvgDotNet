@@ -16,10 +16,15 @@
         <ellipse cx="200" cy="100" rx="15" ry="35" style="fill:blue;stroke:red;stroke-width:5px" />
         
         <rect x="59" y="100" width="100" height="50" style="stroke:darkred;stroke-width:5px;stroke-linejoin:round;fill:none" />
-        <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" style="stroke:black;stroke-width:5px;stroke-linejoin:round;stroke-linecap:round;fill:none" />
-        <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(30,30)" style="stroke:gray;stroke-width:5px;stroke-linejoin:miter;stroke-linecap:butt;fill:none" />
-        <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(60,60)" style="stroke:magenta;stroke-width:5px;stroke-linejoin:bevel;stroke-linecap:square;fill:none" />
         
+        <!-- <polyline points="50,50 150,100 200,40" style="stroke:black;stroke-width:30px;stroke-linejoin:round;stroke-linecap:round;fill:none" /> -->
+        
+        <!-- <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" style="stroke:black;stroke-width:5px;stroke-linejoin:round;stroke-linecap:round;fill:none" /> -->
+        <!-- <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(30,30)" style="stroke:gray;stroke-width:5px;stroke-linejoin:miter;stroke-linecap:butt;fill:none" /> -->
+        <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(60,60)" style="stroke-miterlimit:4;stroke:magenta;stroke-width:15px;stroke-linejoin:miter;stroke-linecap:round;fill:none" />
+    
+    
+    
     </g>
 </g>
 </svg>
