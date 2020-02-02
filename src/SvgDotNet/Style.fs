@@ -17,6 +17,10 @@ type Style =
         letterSpacing   : option<Length>
         wordSpacing     : option<Length>
 
+        lineCap         : LineCap
+        lineJoin        : LineJoin
+        miterLimit      : option<float>
+
         other           : Map<string, list<Value>>
     }
 
@@ -42,6 +46,17 @@ type Style =
                 | Fill.Inherit | Fill.Unspecified -> l.fill
                 | _ -> r.fill
 
+            lineCap =
+                match r.lineCap with
+                | LineCap.Inherit | LineCap.Unspecified -> l.lineCap
+                | _ -> r.lineCap
+
+            lineJoin =
+                match r.lineJoin with
+                | LineJoin.Inherit | LineJoin.Unspecified -> l.lineJoin
+                | _ -> r.lineJoin
+
+            miterLimit = opt l.miterLimit r.miterLimit
             strokeWidth = opt l.strokeWidth r.strokeWidth
 
             fontFamily = opt l.fontFamily r.fontFamily
@@ -64,6 +79,9 @@ module Style =
             strokeWidth = None
             fill = Fill.Unspecified
             other = Map.empty
+            miterLimit = None
+            lineCap = LineCap.Unspecified
+            lineJoin = LineJoin.Unspecified
             fontFamily = None
             fontSize = None
             fontStyle = FontStyle.Unspecified
@@ -78,6 +96,9 @@ module Style =
             strokeWidth = Some (Length 1.0)
             fill = Fill.Color C4b.Black
             other = Map.empty
+            miterLimit = Some 4.0
+            lineCap = LineCap.Butt
+            lineJoin = LineJoin.Miter
             fontFamily = Some "Times New Roman"
             fontSize = Some (Length 16.0)
             fontStyle = FontStyle.Normal
@@ -160,6 +181,32 @@ module Style =
             | Some other -> failwithf "bad word-spacing: %A" other
             | None -> None
 
+        let lineCap =
+            match tryRemove "stroke-linecap" with
+            | Some [Identifier "butt"] -> LineCap.Butt
+            | Some [Identifier "round"] -> LineCap.Round
+            | Some [Identifier "square"] -> LineCap.Square
+            | Some [Identifier "inherit"] -> LineCap.Inherit
+            | Some other -> failwithf "bad line-cap: %A" other
+            | None -> LineCap.Unspecified
+
+
+        let miterLimit =
+            match tryRemove "stroke-miterlimit" with
+            | Some [Float limit] -> Some limit
+            | _ -> None
+
+        let lineJoin =
+            match tryRemove "stroke-linejoin" with
+            | Some [Identifier "arcs"] -> LineJoin.Arcs
+            | Some [Identifier "bevel"] -> LineJoin.Bevel
+            | Some [Identifier "miter"] -> LineJoin.Miter
+            | Some [Identifier "miter-clip"] -> LineJoin.MiterClip
+            | Some [Identifier "round"] -> LineJoin.Round
+            | Some [Identifier "inherit"] -> LineJoin.Inherit
+            | Some other -> failwithf "bad line-join: %A" other
+            | None -> LineJoin.Unspecified
+
 
         let transform =
             match tryRemove "transform" with
@@ -171,6 +218,9 @@ module Style =
             stroke = stroke
             strokeWidth = strokeWidth
             fill = fill
+            miterLimit = miterLimit
+            lineCap = lineCap
+            lineJoin = lineJoin
             fontFamily = fontFamily
             fontStyle = fontStyle
             fontSize = fontSize

@@ -25,7 +25,9 @@ module private Helpers =
     type Length with
         member x.X(s : State) = x.ToPixels(s.fontSize, s.viewBox.Size.X)
         member x.Y(s : State) = x.ToPixels(s.fontSize, s.viewBox.Size.Y)
-    
+    type V2L with
+        member x.ToV2d(s : State) =
+            V2d(x.X.X s, x.Y.Y s)
     
 
 
@@ -98,6 +100,247 @@ module SvgProps =
                 trafoInGroup = delta * state.trafoInGroup
             }
 
+
+module Stroke = 
+    open Aardvark.Rendering.Text
+
+    let rec private tryClip (a : PathSegment) (b : PathSegment) : option<option<PathSegment> * option<PathSegment>> =
+        match a, b with
+        | Line(a0, a1), Line(b0, b1) ->
+            let ra = Ray2d(a0, a1 - a0)
+            let rb = Ray2d(b0, b1 - b0)
+
+            let mutable ta = 0.0
+            let mutable tb = 0.0
+            if ra.Intersects(rb, &ta) && rb.Intersects(ra, &tb) && ta < 1.0 && ta > 0.0 && tb < 1.0 && tb > 0.0 then
+                let px = ra.GetPointOnRay(ta)
+                Some (PathSegment.tryLine a0 px, PathSegment.tryLine px b1)
+            else
+                None
+
+        | Line(a1, b1), Arc(alpha0, alpha1, e) ->
+            
+            //e.GetAlpha
+
+
+            // intersect line with ellipse and check t/phi! (2 intersections)
+            failwith ""
+            
+        | Line(a1, b1), Bezier2(p0, pc, p1) ->
+            // shouldn't be too hard (2 intersections)
+            failwith ""
+
+        | Line(a1, b1), Bezier3(p0, c0, c1, p1) ->
+            // shouldn't be too hard (??? intersections)
+            failwith ""
+            
+        | Arc(a0, a1, ae), Arc(b0, b1, be) ->
+            // shouldn't be too hard (2 intersections)
+            failwith ""
+
+        | Arc(a0, a1, ae), Bezier2(b0, b1, b2) ->
+            // no idea????
+            failwith ""
+
+        | Arc(a0, a1, ae), Bezier3(b0, b1, b2, b3) ->
+            // no idea????
+            failwith ""
+
+        | Bezier2(a0, a1, a2), Bezier2(b0, b1, b2) ->
+            
+            failwith ""
+
+        | Bezier2(a0, a1, a2), Bezier3(b0, b1, b2, b3) ->
+            failwith ""
+            
+        | Bezier3(a0, a1, a2, a3), Bezier3(b0, b1, b2, b3) ->
+            failwith ""
+
+        | l, r ->
+            match tryClip (PathSegment.reverse r) (PathSegment.reverse l) with
+            | Some (r', l') ->
+                Some (Option.map PathSegment.reverse l', Option.map PathSegment.reverse r')
+            | None ->
+                None
+
+
+
+    let private getCap (style : LineCap) (p : V2d) (d : V2d) (w : float) =
+        let n = V2d(-d.Y, d.X)
+        
+        match style with
+        | LineCap.Butt | LineCap.Unspecified | LineCap.Inherit -> 
+            [
+                PathSegment.tryLine (p - n*w) (p + n*w)
+            ]
+        | LineCap.Square -> 
+            let pStart = p + n*w
+            let pEnd = p - n*w
+            let p00 = p - n*w - d*w
+            let p01 = p + n*w - d*w
+            [
+                PathSegment.tryLine pEnd p00
+                PathSegment.tryLine p00 p01
+                PathSegment.tryLine p01 pStart
+            ]
+        | LineCap.Round ->
+            let pStart = p + n*w
+            let pEnd = p - n*w
+            let p00 = p - d*w
+            let p0n = p00 - n*w
+            let p0p = p00 + n*w
+            [
+                PathSegment.tryArcSegment pEnd p0n p00
+                PathSegment.tryArcSegment p00 p0p pStart
+            ]
+
+    let private offset (w : float) (p : PathSegment) =
+        match p with
+        | Line(p0, p1) ->
+            let d = Vec.normalize (p1 - p0)
+            let n = V2d(-d.Y, d.X)
+            PathSegment.line (p0+w*n) (p1+w*n)
+
+        | Arc(a, b, e) ->
+            let r0 = e.Axis0.Length
+            let r1 = e.Axis1.Length
+            let d0 = e.Axis0 / r0
+            let d1 = e.Axis1 / r1
+            PathSegment.arc a b (Ellipse2d(e.Center, d0 * (r0 + w), d1 * (r1 + w)))
+
+        | Bezier2(p0, p1, p2) ->
+            let n0 = PathSegment.normal 0.0 p
+            let n1 = PathSegment.normal 0.5 p
+            let n2 = PathSegment.normal 1.0 p
+            PathSegment.bezier2 (p0+w*n0) (p1+w*n1) (p2+w*n2)
+
+        | Bezier3(p0, p1, p2, p3)  ->
+            failwith "bezier3 not handled"
+
+    let private joinSegments (style : LineJoin) (miterLimit : float) (a : PathSegment) (b : PathSegment) =
+        match tryClip a b with
+        | Some(a, b) -> 
+            [a], b.Value
+        | None ->
+            let pa = PathSegment.endPoint a
+            let ta = PathSegment.tangent 1.0 a
+            let ra = Ray2d(pa, ta)
+
+            let pb = PathSegment.startPoint b
+            let tb = PathSegment.tangent 0.0 b
+            let rb = Ray2d(pb, -tb)
+
+            let mutable t = 0.0
+            if ra.Intersects(rb, &t) && t > 0.0 then
+                let px = ra.GetPointOnRay t
+                let elements = 
+                    match style with
+                    | LineJoin.Miter | LineJoin.MiterClip
+                    | LineJoin.Inherit | LineJoin.Unspecified | LineJoin.Arcs -> 
+                        let theta = acos (clamp -1.0 1.0 (Vec.dot ta -tb))
+                        let miterLength = 1.0 / sin (theta / 2.0)
+                        if miterLength > miterLimit then
+                            [
+                                Some a
+                                PathSegment.tryLine pa pb
+                            ]
+                        else
+                            [
+                                Some a
+                                PathSegment.tryLine pa px
+                                PathSegment.tryLine px pb
+                            ]
+
+                    | LineJoin.Bevel ->
+                        [
+                            Some a
+                            PathSegment.tryLine pa pb
+                        ]
+
+                    | LineJoin.Round ->
+                        [
+                            Some a
+                            PathSegment.tryArcSegment pa px pb
+                        ]
+                            
+
+                elements, b
+            else
+                [Some a], b
+
+
+
+
+
+    let outsetPath (distance : float) (cap : LineCap) (join : LineJoin) (miterLimit : float) (path : Path) =
+        let input = Path.toArray path
+        if input.Length > 0 then
+            let first = input.[0]
+            let last = input.[input.Length - 1]
+            let input = ()
+
+            let segments = System.Collections.Generic.List<PathSegment>()
+            
+            let add l =
+                match l |> List.choose id with
+                | [] -> ()
+                | l -> segments.AddRange l
+            
+
+            let s = distance / 2.0
+
+            add (
+                let p = PathSegment.startPoint first
+                let d = PathSegment.tangent 0.0 first
+                getCap cap p d s
+            )
+
+            do
+                let comp = Path.toArray path |> Array.map (offset s)
+                for i in 0 .. comp.Length - 1 do
+                    let c = comp.[i]
+                    if i < comp.Length - 1 then 
+                        let next = comp.[i+1]
+                        let segs, nn = joinSegments join miterLimit c next
+                        add segs
+                        comp.[i+1] <- nn
+                    else
+                        add [ Some c ]
+
+
+            add (
+                let p = PathSegment.endPoint last
+                let d = -PathSegment.tangent 1.0 last
+                getCap cap p d s
+            )
+                
+            do
+                let comp = Path.toArray path |> Array.rev |> Array.map (PathSegment.reverse >> offset s)
+                for i in 0 .. comp.Length - 1 do
+                    let c = comp.[i]
+                    if i < comp.Length - 1 then 
+                        let next = comp.[i+1]
+                        let segs, nn = joinSegments join miterLimit c next
+                        add segs
+                        comp.[i+1] <- nn
+                    else
+                        add [ Some c ]
+
+            Path.ofSeq segments
+
+        else
+            Path.empty
+
+
+
+
+
+
+
+
+
+
+
 [<EntryPoint;STAThread>]
 let main argv = 
     let readShape (path : string) =
@@ -109,7 +352,7 @@ let main argv =
 
         let rec toShapeList (state : State) (n : SvgNode) =
             //let trafo = SvgProps.newTrafo state n.Props
-            let style = state.style + n.Props.style
+            let style = state.style + n.props.style
             let state = { state with style = style }
 
             let inline getState (isGroup : bool)  (state : State) (props : SvgProps) =
@@ -122,10 +365,125 @@ let main argv =
 
             
 
-            match n with
-            | Rect(_, w, h) ->  
-                let state = getState false state n.Props
-                let size = V2d(w.X state, h.Y state)
+            match n.constructor with
+            | Circle(radius, center) ->
+                let state = getState false state n.props
+                let center = center.ToV2d state
+                let rx = radius.X state
+                let ry = radius.Y state
+                let ellipse = Ellipse2d(center, V2d.IO * rx, V2d.OI * ry)
+                [
+                    match style.fill with
+                    | Fill.Color color -> 
+                        ConcreteShape.fillEllipse color ellipse
+                        |> ConcreteShape.transform (m23 state.trafo)
+                    | _ ->  
+                        ()
+                    match style.stroke, style.strokeWidth with
+                    | Stroke.Color color, Some len when len.Value > 0.0 ->
+                        ConcreteShape.ellipse color len.Value ellipse
+                        |> ConcreteShape.transform (m23 state.trafo)
+                    | _ ->  
+                        ()
+                ]
+            | Ellipse(rx, ry, center) ->
+                let state = getState false state n.props
+                let center = center.ToV2d state
+                let rx = rx.X state
+                let ry = ry.Y state
+                let ellipse = Ellipse2d(center, V2d.IO * rx, V2d.OI * ry)
+                [
+                    match style.fill with
+                    | Fill.Color color -> 
+                        ConcreteShape.fillEllipse color ellipse
+                        |> ConcreteShape.transform (m23 state.trafo)
+                    | _ ->  
+                        ()
+                    match style.stroke, style.strokeWidth with
+                    | Stroke.Color color, Some len when len.Value > 0.0 ->
+                        ConcreteShape.ellipse color len.Value ellipse
+                        |> ConcreteShape.transform (m23 state.trafo)
+                    | _ ->  
+                        ()
+                ]
+
+            | Line(p0, p1) ->
+                match style.stroke, style.strokeWidth with
+                | Stroke.Color color, Some w when w.Value > 0.0 ->
+                    let p0 = p0.ToV2d state
+                    let p1 = p1.ToV2d state
+
+                    let c = Vec.normalize (p1 - p0)
+                    let n = V2d(-c.Y, c.X)
+                    let pc = 0.5 * (p0 + p1) + n * 20.0
+
+                    let path =
+                        Path.ofList [
+                            PathSegment.line p0 pc
+                            PathSegment.line pc p1
+                            
+                        ]
+
+                    let miterLimit = defaultArg style.miterLimit 4.0
+                    let path = Stroke.outsetPath w.Value style.lineCap style.lineJoin miterLimit path
+                    [ ConcreteShape.ofPath state.trafo.Forward color path ]
+
+
+                    //let dir = p1 - p0
+                    //let len = Vec.length dir
+                    //let x = dir / len
+                    //let y = V2d(-x.Y, x.X)
+                    //let wHalf = w.Value / 2.0
+                    //let transform =
+                    //    state.trafo.Forward *
+                    //    M33d.FromCols(V3d(x, 0.0), V3d(y, 0.0), V3d(p0, 1.0))
+
+
+                    //let shape = 
+                    //    match style.lineCap with
+                    //    | LineCap.Unspecified | LineCap.Inherit | LineCap.Butt ->
+                    //        ConcreteShape.fillRectangle color (Box2d(0.0, -wHalf, len, wHalf))
+                    //    | LineCap.Square ->
+                    //        ConcreteShape.fillRectangle color (Box2d(-wHalf, -wHalf, len + wHalf, wHalf))
+                    //    | LineCap.Round ->
+                    //        ConcreteShape.fillRoundedRectangle color wHalf (Box2d(-wHalf, -wHalf, len + wHalf, wHalf))
+
+                    //[ ConcreteShape.transform (M23d.op_Explicit transform) shape ]
+                    
+                | _ ->
+                    []
+
+            | Polyline pts ->
+                let state = getState false state n.props
+                let pts = pts |> List.map (fun p -> p.ToV2d state)
+                match style.stroke, style.strokeWidth with
+                | Stroke.Color color, Some w when w.Value > 0.0 ->
+
+                    let rec traverse (last : option<V2d>) (p : list<V2d>) =
+                        match p with
+                        | [] -> []
+                        | p :: rest ->
+                            match last with
+                            | Some l ->
+                                match PathSegment.tryLine l p with
+                                | Some l -> l :: traverse (Some p) rest
+                                | None -> traverse (Some p) rest
+                            | None ->
+                                traverse (Some p) rest
+
+
+                    let miterLimit = defaultArg style.miterLimit 4.0
+                    let path = Path.ofList (traverse None pts)
+                    let path = Stroke.outsetPath w.Value style.lineCap style.lineJoin miterLimit path
+                    [ ConcreteShape.ofPath state.trafo.Forward color path ]
+                | _ ->
+                    []
+            | Polygon _  ->
+                []
+
+            | Rect(_, size) ->  
+                let state = getState false state n.props
+                let size = V2d(size.X.X state, size.Y.Y state)
                 [
                     match style.fill with
                     | Fill.Color color -> 
@@ -141,13 +499,13 @@ let main argv =
                         ()
                 ]
 
-            | Group(_, children) ->
-                let state = getState true state n.Props
+            | Group(children) ->
+                let state = getState true state n.props
                 children |> List.collect (fun c ->
                     toShapeList state c
                 )
-            | Text(_, spans) ->
-                let parentState = getState false state n.Props
+            | Text(spans) ->
+                let parentState = getState false state n.props
 
                 let mutable state = parentState
                 spans |> List.collect (fun s ->
@@ -168,12 +526,12 @@ let main argv =
                     
                     let letterSpacing =
                         match style.letterSpacing with
-                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY) / fontSize
+                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY)
                         | None -> 0.0
 
                     let wordSpacing =
                         match style.wordSpacing with
-                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY) / fontSize
+                        | Some s -> s.ToPixels(fontSize, state.viewBox.SizeY)
                         | None -> 0.0
 
                     let color =
@@ -216,6 +574,7 @@ let main argv =
                                 g |> List.map (ConcreteShape.transform t)
                             else
                                 let c = str.[idx]
+                                Log.warn "character %A" c
                                 match c with
                                 | ' ' ->
                                     adjust (offset + wordSpacing + letterSpacing) str (idx + 1) g
@@ -256,7 +615,7 @@ let main argv =
                     )
 
                 )
-            | Path(_, _) ->
+            | Path(_) ->
                 []
     
         let rootToShapeList (svg : Svg) =

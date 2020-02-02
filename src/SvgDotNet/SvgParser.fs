@@ -162,8 +162,9 @@ module private Extensions =
 
 
 module SvgParser = 
+    open Parser
     let private whitespace = System.Text.RegularExpressions.Regex @"[ \t\r\n]+"
-    
+
     let private cleanText (text : string) =
         whitespace.Replace(text, " ").Trim()
 
@@ -179,12 +180,15 @@ module SvgParser =
 
         | "g" ->
             let children = children |> List.choose visit
-            Some <| Group(props, children)
+            Some <| { constructor = Group children; props = props }
 
         | "rect" ->
             match node.TryGetLength("width"), node.TryGetLength("height") with
             | Some w, Some h ->
-                Some (Rect(props, w, h))
+                let x = defaultArg props.x Length.Zero
+                let y = defaultArg props.y Length.Zero
+
+                Some { constructor = Rect(V2L(x,y), V2L(w,h)); props = props }
             | _ ->
                 Log.warn "bad rect: %A" node
                 None
@@ -194,7 +198,7 @@ module SvgParser =
                 let p = 
                     if p.Length > 13 then p.Substring(0, 10) + "..."
                     else p
-                Some (Path(props, p))
+                Some { constructor = Path []; props = props }
             | None ->
                 Log.warn "bad path: %A" node
                 None
@@ -224,10 +228,59 @@ module SvgParser =
                         
                 )
 
-            Some (SvgNode.Text(props, spans))
+            Some { constructor = SvgConstructor.Text spans; props = props }
             
+        | "circle" ->
+            match node.TryGetLength("r") with
+            | Some r ->
+                let cx = node.TryGetLength "cx" |> Option.defaultValue Length.Zero
+                let cy = node.TryGetLength "cy" |> Option.defaultValue Length.Zero
+                Some { constructor = Circle(r, V2L(cx, cy)); props = props }
+
+            | None ->
+                None
+        | "ellipse" ->
+            match node.TryGetLength("rx"), node.TryGetLength("ry") with
+            | Some rx, Some ry ->
+                let cx = node.TryGetLength "cx" |> Option.defaultValue Length.Zero
+                let cy = node.TryGetLength "cy" |> Option.defaultValue Length.Zero
+                Some { constructor = Ellipse(rx, ry, V2L(cx, cy)); props = props }
+                
+            | Some r, None | None, Some r ->
+                let cx = node.TryGetLength "cx" |> Option.defaultValue Length.Zero
+                let cy = node.TryGetLength "cy" |> Option.defaultValue Length.Zero
+                Some { constructor = Ellipse(r, r, V2L(cx, cy)); props = props }
+
+            | _ ->
+                None
+
+        | "polyline" ->
+            match node.TryGetAttribute "points" with
+            | Some pts ->
+                let pointSep = pRegex [ @"[ \t]+" ]
+                let coordSep = pRegex [ @"[ \t]*,[ \t]*" ]
+                let point = TransformParser.pSize .> coordSep .>. TransformParser.pSize |> pMap V2L
+
+                let pPoints = Parser.pSepBy1 pointSep point
+                match pPoints |> pRun pts with
+                | Some pts -> 
+                    Some { constructor = Polyline pts; props = props }
+                | None ->
+                    None
+            | None ->
+                None
+
+        | "line" ->
+            let x1 = node.TryGetLength "x1" |> Option.defaultValue Length.Zero
+            let y1 = node.TryGetLength "y1" |> Option.defaultValue Length.Zero
+            let x2 = node.TryGetLength "x2" |> Option.defaultValue Length.Zero
+            let y2 = node.TryGetLength "y2" |> Option.defaultValue Length.Zero
+            Some { constructor = Line(V2L(x1, y1), V2L(x2, y2)); props = props }
+
         | "metadata" ->
             None
+
+
 
         | _ ->
             if node.Name.NamespaceName = "http://www.w3.org/2000/svg" then

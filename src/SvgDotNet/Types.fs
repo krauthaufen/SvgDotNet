@@ -78,7 +78,24 @@ type Value =
     | Identifier of string
     | Unknown of string
     | Transform of list<Transform>
-
+    
+[<RequireQualifiedAccess>]
+type LineJoin =
+    | Arcs
+    | Bevel
+    | Miter
+    | MiterClip
+    | Round
+    | Inherit
+    | Unspecified
+    
+[<RequireQualifiedAccess>]
+type LineCap =
+    | Butt
+    | Round
+    | Square
+    | Inherit
+    | Unspecified
 
 [<RequireQualifiedAccess>]
 type Stroke =
