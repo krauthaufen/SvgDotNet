@@ -653,7 +653,7 @@ let main argv =
 
 
 
-    let path = @"C:\Users\Schorsch\Downloads\Example_svg.svg"
+    let path = Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
 
     let shapes = readShape path |> cval
 
