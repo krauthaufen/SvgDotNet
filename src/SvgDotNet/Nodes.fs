@@ -32,10 +32,6 @@ type Span =
         content : string
     }
 
-type SvgPathComponent =
-    | Move of x : Length * y : Length
-
-
 type V2L(x : Length, y : Length) =
     member __.X = x
     member __.Y = y
@@ -50,7 +46,7 @@ type SvgConstructor =
     | Polygon of points : list<V2L>
     | Polyline of points : list<V2L>
     | Text of components : list<Span>
-    | Path of path : list<SvgPathComponent>
+    | Path of path : PathInstruction[]
 
 and SvgNode =
     { 

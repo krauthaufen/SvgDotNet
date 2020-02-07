@@ -227,7 +227,16 @@ module Parser =
             | None ->
                 pSuccess []
         )
-
+        
+    let rec pSepByCnt (cnt : int) (sep : Parser<'x>) (parser : Parser<'a>) =
+        if cnt = 0 then
+            pSuccess []
+        else
+            parser .>
+            sep .>.
+            pSepByCnt (cnt - 1) sep parser |>
+            pMap (fun (h, t) -> h :: t)
+        
 
 
     let pRun (input : string) (p : Parser<'a>) =

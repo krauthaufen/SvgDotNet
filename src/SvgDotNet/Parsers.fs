@@ -393,3 +393,195 @@ module StyleParser =
         match pStyle |> pRun style with
         | Some props -> props
         | None -> Style.none
+
+module PathParser =
+    open Parser
+
+    let pName = pRegex [ "[A-Za-z_]+" ] |> pMap (fun m -> m.Value)
+
+    let pSep = pRegex [ "[ \t,]*"]
+    let pSep1 = pRegex [ "[ \t,]+"]
+    
+    let pInstruction =  
+        pSep >.
+        pName .> 
+        pSep .>.
+        pSepBy pSep1 pFloat
+
+    //let pInstruction =  
+    //    pRegex ["[ \t]*([a-zA-Z_])[ \t]*"] |> pBind (fun m ->
+    //        let code = m.Groups.[1].Value
+    //        let cnt = 
+    //            match code.ToLower() with
+    //            | "m" -> 2
+    //            | "l" -> 2
+    //            | "h" | "v" -> 1
+    //            | "q" -> 4
+    //            | "c" -> 6
+    //            | "s" -> 4
+    //            | "t" -> 2
+    //            | "a" -> 7
+    //            | "z" -> 0
+    //            | _ -> 1000000
+
+    //        pSepByCnt cnt pSep pFloat
+    //    )
+
+
+    let inline private (|V2|_|) (l : list<float>) =
+        match l with
+        | x :: y :: rest -> Some (V2d(x,y),rest)
+        | _ -> None
+
+
+    let rec private parsePathInstructions (acc : System.Collections.Generic.List<PathInstruction>) (ql : voption<V2d>) (cl : voption<V2d>) (p : V2d) (t : Text) =
+        if Text.IsEmptyOrWhitespace t then
+            true
+        else
+            match pInstruction t with
+            | Some (rest, res) ->
+                match res with
+                | "M", V2(p, []) -> 
+                    acc.Add (Move p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+
+                | "m", V2(dp, []) -> 
+                    let p = p + dp
+                    acc.Add(Move p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+
+                | "L", V2(p, []) ->
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+                    
+                | "l", V2(dp, []) ->
+                    let p = p + dp
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+                    
+                | "H", [x] ->
+                    let p = V2d(x, p.Y)
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+                    
+                | "h", [x] ->
+                    let p = V2d(p.X + x, p.Y)
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+
+                | "V", [y] ->
+                    let p = V2d(p.X, y)
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+                    
+                | "v", [y] ->
+                    let p = V2d(p.X, p.Y + y)
+                    acc.Add(LineTo p)
+                    parsePathInstructions acc ValueNone ValueNone p rest
+
+                | "Q", V2(c, V2(p1, [])) ->
+                    acc.Add(QuadraticTo(c, p1))
+                    parsePathInstructions acc (ValueSome c) ValueNone p1 rest
+                    
+                | "q", V2(dc, V2(dp, [])) ->
+                    let c = p + dc
+                    let p1 = p + dp
+                    acc.Add(QuadraticTo(c, p1))
+                    parsePathInstructions acc (ValueSome c) ValueNone p1 rest
+
+                | "C", V2(c0, V2(c1, V2(p1, []))) ->
+                    acc.Add(CurveTo(c0, c1, p1))
+                    parsePathInstructions acc ValueNone (ValueSome c1) p1 rest
+                    
+                | "c", args ->
+                    let rec run (c : V2d) (p : V2d) (l : list<float>) =
+                        match l with
+                        | V2(dc0, V2(dc1, V2(dp, rr))) ->
+                            printfn "%A %A %A" dc0 dc1 dp
+                            let c0 = p + dc0
+                            let c1 = p + dc1
+                            let p1 = p + dp
+                            acc.Add(CurveTo(c0, c1, p1))
+                            run c1 p1 rr
+                        | [] ->
+                           (c, p)
+                        | l ->  
+                            Log.warn "bad: %A" l
+                            (c, p)
+                    let c1, p1 = run V2d.Zero p args
+                    parsePathInstructions acc ValueNone (ValueSome c1) p1 rest
+                
+                | "S", V2(c1, V2(p1, [])) ->
+                    match cl with
+                    | ValueSome cl ->
+                        let c0 = 2.0 * p - cl
+                        acc.Add(CurveTo(c0, c1, p1))
+                        parsePathInstructions acc ValueNone (ValueSome c1) p1 rest
+                    | ValueNone ->
+                        Log.warn "bad S: no previous"
+                        parsePathInstructions acc ValueNone ValueNone p1 rest
+                        
+                | "s", V2(dc1, V2(dp1, [])) ->
+                    let p1 = p + dp1
+                    match cl with
+                    | ValueSome cl ->
+                        let c0 = 2.0 * p - cl
+                        let c1 = p + dc1
+                        acc.Add(CurveTo(c0, c1, p1))
+                        parsePathInstructions acc ValueNone (ValueSome c1) p1 rest
+                    | ValueNone ->
+                        Log.warn "bad s: no previous"
+                        parsePathInstructions acc ValueNone ValueNone p1 rest
+                        
+                | "T", V2(p1, []) ->
+                    match ql with
+                    | ValueSome ql ->
+                        let c = 2.0 * p - ql
+                        acc.Add(QuadraticTo(c, p1))
+                        parsePathInstructions acc (ValueSome c) ValueNone p1 rest
+                    | ValueNone ->
+                        Log.warn "bad T: no previous"
+                        parsePathInstructions acc ValueNone ValueNone p1 rest
+
+                          
+                | "t", V2(dp1, []) ->
+                    let p1 = p + dp1
+                    match ql with
+                    | ValueSome ql ->
+                        let c = 2.0 * p - ql
+                        acc.Add(QuadraticTo(c, p1))
+                        parsePathInstructions acc (ValueSome c) ValueNone p1 rest
+                    | ValueNone ->
+                        Log.warn "bad T: no previous"
+                        parsePathInstructions acc ValueNone ValueNone p1 rest
+
+                | "A", [rx; ry; xangle; largeArc; sweep; x; y] ->
+                    failwith "arcs not implemented"
+
+                | "a", [rx; ry; xangle; largeArc; sweep; dx; dy] ->
+                    failwith "arcs not implemented"
+
+                | ("Z" | "z"), [] ->
+                    acc.Add ClosePath
+                    parsePathInstructions acc ValueNone ValueNone p rest
+
+                | name, args -> 
+                    Log.warn "bad instruction %s(%A)" name args
+                    parsePathInstructions acc ValueNone ValueNone p rest
+            | None ->
+                Log.warn "could not parse %A" t
+                false
+
+            
+    let parse (t : Text) =
+        let res = System.Collections.Generic.List()
+        if parsePathInstructions res ValueNone ValueNone V2d.Zero t then
+            Some (res.ToArray())
+        else
+            None
+            
+
+
+
+
+

@@ -121,3 +121,10 @@ type FontStyle =
     | Bold
     | Oblique of angle : float
 
+    
+type PathInstruction =
+    | ClosePath
+    | Move of V2d
+    | LineTo of V2d
+    | QuadraticTo of V2d * V2d
+    | CurveTo of V2d * V2d * V2d

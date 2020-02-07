@@ -195,10 +195,11 @@ module SvgParser =
         | "path" ->
             match node.TryGetAttribute "d" with
             | Some p ->
-                let p = 
-                    if p.Length > 13 then p.Substring(0, 10) + "..."
-                    else p
-                Some { constructor = Path []; props = props }
+                match PathParser.parse (Text p) with
+                | Some instructions when instructions.Length > 0 ->
+                    Some { constructor = Path instructions; props = props }
+                | _ ->     
+                    None
             | None ->
                 Log.warn "bad path: %A" node
                 None
