@@ -16,6 +16,10 @@
   </PropertyGroup>
   <ItemGroup>
 
+    <Compile Include="Polynomial.fs" />
+
+    <Compile Include="PolynomialTest.fs" />
+
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

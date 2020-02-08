@@ -915,59 +915,10 @@ module Stroke =
             Path.empty
 
 
-let convexHull (p0: V2d) (p1: V2d) (p2: V2d) (p3: V2d) =
-    let pts = [|p0;p1;p2;p3|]
-
-    let sa = Set.singleton 0
-
-    let sb =
-        if Fun.ApproximateEquals(p0, p1, 1E-8) then sa
-        else Set.add 1 sa
-        
-    let sc =
-        if Fun.ApproximateEquals(p0, p2, 1E-8) || Fun.ApproximateEquals(p1, p2, 1E-8) then sb
-        else Set.add 2 sb
-
-    let set =
-        if Fun.ApproximateEquals(p0, p3, 1E-8) || Fun.ApproximateEquals(p1, p3, 1E-8) || Fun.ApproximateEquals(p2, p3, 1E-8) then sc
-        else Set.add 3 sc
-
-
-
-    let p = Array.zeroCreate 5 
-
-    let mutable pointOnHull = set |> Seq.minBy (fun i -> pts.[i].X)
-    let mutable i = 0
-    let mutable endpoint = -1
-    while endpoint <> p.[0] do
-        p.[i] <- pointOnHull
-        endpoint <- Seq.head set
-        for sj in set do
-            if sj <> pointOnHull then
-                let pi = pts.[p.[i]]
-                let pj = pts.[sj]
-                let pe = pts.[endpoint]
-
-                let l = pj.PosLeftOfLineValue(pi, pe)
-                if endpoint = pointOnHull || l >= 1E-8 || (Fun.IsTiny l && (Vec.length (pj-pi) > Vec.length(pe-pi))) then
-                    endpoint <- sj
-        i <- i + 1
-        pointOnHull <- endpoint
-
-    Array.take i p
-
-
 [<EntryPoint;STAThread>]
 let main argv = 
-
-    //let p0 = (V2d(0,0))
-    //let p1 = V2d(1,0)
-    //let p2 = V2d(2,0)
-    //let p3 = V2d.II
-
-    //let h = convexHull p0 p1 p2 p3
-    //Log.warn "%A" h
-    //System.Environment.Exit 0
+    PolynomialTest.run()
+    System.Environment.Exit 0
 
     let readShape (path : string) =
 
@@ -1332,7 +1283,7 @@ let main argv =
 
 
 
-    let path = @"C:\Users\Schorsch\Downloads\reindeer.svg" //Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
+    let path = @"C:\Users\Schorsch\Development\aardvark.rendering\data\logo\aardvark.svg" //Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
 
     let shapes = readShape path |> cval
 
