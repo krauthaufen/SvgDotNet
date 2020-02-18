@@ -20,6 +20,10 @@
 
     <Compile Include="PolynomialTest.fs" />
 
+    <Compile Include="Bvh.fs" />
+
+    <Compile Include="Path.fs" />
+
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -406,7 +406,7 @@ module PathParser =
         pSep >.
         pName .> 
         pSep .>.
-        pSepBy pSep1 pFloat
+        pSepBy pSep pFloat
 
     //let pInstruction =  
     //    pRegex ["[ \t]*([a-zA-Z_])[ \t]*"] |> pBind (fun m ->
@@ -556,10 +556,14 @@ module PathParser =
                         parsePathInstructions acc ValueNone ValueNone p1 rest
 
                 | "A", [rx; ry; xangle; largeArc; sweep; x; y] ->
-                    failwith "arcs not implemented"
+                    let p1 = V2d(x,y)
+                    acc.Add(Arc(p1, rx, ry, xangle, largeArc > 0.5, sweep > 0.5))
+                    parsePathInstructions acc ValueNone ValueNone p1 rest
 
                 | "a", [rx; ry; xangle; largeArc; sweep; dx; dy] ->
-                    failwith "arcs not implemented"
+                    let p1 = p + V2d(dx,dy)
+                    acc.Add(Arc(p1, rx, ry, xangle, largeArc > 0.5, sweep > 0.5))
+                    parsePathInstructions acc ValueNone ValueNone p1 rest
 
                 | ("Z" | "z"), [] ->
                     acc.Add ClosePath

@@ -128,3 +128,4 @@ type PathInstruction =
     | LineTo of V2d
     | QuadraticTo of V2d * V2d
     | CurveTo of V2d * V2d * V2d
+    | Arc of p1 : V2d * rx : float * ry : float * rotation : float * large : bool * sweep : bool

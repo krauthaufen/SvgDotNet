@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800px" height="800px" viewBox="0 0 400 400">
 <rect width="300" height="120" y="0" fill="darkred"/>
 <g>
-    <g style="font-size: 20px" transform="scale(1, 1)">
+    <g style="font-size: 20px">
         <rect width="300" height="120" y="20" fill="green"/>
         <rect width="80" height="150" x="16" y="30" fill="red"/>
         <rect width="99.0" height="50" x="50" y="50" fill="blue"/>
@@ -21,10 +21,12 @@
         
         <!-- <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" style="stroke:black;stroke-width:5px;stroke-linejoin:round;stroke-linecap:round;fill:none" /> -->
         <!-- <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(30,30)" style="stroke:gray;stroke-width:5px;stroke-linejoin:miter;stroke-linecap:butt;fill:none" /> -->
-        <polyline points="50,50 150,100 150,40 200,40 180,30 250,30 250,100" transform="translate(60,60)" style="stroke-miterlimit:4;stroke:magenta;stroke-width:15px;stroke-linejoin:miter;stroke-linecap:round;fill:none" />
-    
-    
-    
+        <!-- <polyline points="50,50 150,100 200,50 50,100" transform="translate(60,60)" style="stroke-miterlimit:4;stroke:magenta;stroke-width:40px;stroke-linejoin:bevel;stroke-linecap:round;fill:none" /> -->
+        
+           
+           
     </g>
+    
 </g>
+<path d="M 100 100 A 70 50 0 1 0 200 100 Z" fill="pink" />
 </svg>
