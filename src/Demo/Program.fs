@@ -117,503 +117,12 @@ module SvgProps =
         //        trafoInGroup = delta * state.trafoInGroup
         //    }
 
-module Intersections =
-    open Aardvark.Rendering.Text
-
-    [<AutoOpen>]
-    module private Helpers = 
-        let flip (a,b) = b,a
-
-        let findBezierT (epsilon : float) (pt : V2d) (p0 : V2d) (p1 : V2d) (p2 : V2d) : option<float> =
-            let a = p0 - 2.0*p1 + p2
-            let b = 2.0*p1 - 2.0*p0
-            let c = p0 - pt
-
-            let struct(t0, t1) = Polynomial.RealRootsOf(a.X, b.X, c.X)
-            let struct(t2, t3) = Polynomial.RealRootsOf(a.Y, b.Y, c.Y)
-
-            let inline check t = if t >= -epsilon && t <= 1.0 + epsilon then Some t else None
-
-            if Fun.ApproximateEquals(t0, t2, epsilon) then check ((t0 + t2) / 2.0)
-            elif Fun.ApproximateEquals(t0, t3, epsilon) then check ((t0 + t3) / 2.0)
-            elif Fun.ApproximateEquals(t1, t2, epsilon) then check ((t1 + t2) / 2.0)
-            elif Fun.ApproximateEquals(t1, t3, epsilon) then check ((t1 + t3) / 2.0)
-            else None
-
-        let inline arcT (a0 : float) (da : float) (v : float) =
-            let diff = v - a0
-            if da > 0.0 then
-                if diff >= 0.0 then diff / da
-                else (Constant.PiTimesTwo + diff) / da
-            else
-                if diff < 0.0 then diff / da
-                else (diff - Constant.PiTimesTwo) / da
-
-    [<AutoOpen>]
-    module Implementations = 
-        let lines (epsilon : float) (a0 : V2d) (a1 : V2d) (b0 : V2d) (b1 : V2d) =
-            let ra = Ray2d(a0, a1 - a0)
-            let rb = Ray2d(b0, b1 - b0)
-            let mutable ta = 0.0
-            let mutable tb = 0.0
-            if ra.Intersects(rb, &ta) && rb.Intersects(ra, &tb) && ta <= 1.0 - epsilon && ta >= epsilon && tb <= 1.0 - epsilon && tb >= epsilon then
-                [ta, tb]
-            else
-                []
-
-        let arcLine (epsilon : float) (alpha0: float) (dAlpha : float) (e : Ellipse2d) (a0 : V2d) (b0 : V2d) =
-            // transform the ellipse to a unit-circle and solve the system in that space.
-            let toGlobal = M33d.FromCols(V3d(e.Axis0, 0.0), V3d(e.Axis1, 0.0), V3d(e.Center, 1.0))
-            let toLocal = toGlobal.Inverse
-
-            let r = Ray2d(a0, b0 - a0)
-
-            let p0 = toLocal.TransformPos a0
-            let p1 = toLocal.TransformPos b0
-            let o = p0
-            let d = p1 - p0
-
-            // | o + t*d | = 1
-            // <o+t*d|o+t*d> = 1
-            // <o|o+t*d> + t*<d|o+t*d> = 1
-            // <o|o> + 2t*<o|d> + t^2*<d|d> = 1
-            // t^2*(<d|d>) + t*(2*<o|d>) + (o^2 - 1) = 0
-            let a = Vec.lengthSquared d
-            let b = 2.0 * Vec.dot o d
-            let c = Vec.lengthSquared o - 1.0
-
-            let q2 = b*b - 4.0*a*c
-            
-            let inline test (t : float) =
-                if t >= -epsilon && t <= 1.0 + epsilon then
-                    let pt = r.GetPointOnRay t 
-                    let a = e.GetAlpha(pt)
-                    let ta = arcT alpha0 dAlpha a
-                    if ta >= -epsilon && ta <= 1.0 + epsilon then [(ta, t)]
-                    else []
-                else
-                    []
-
-            if Fun.IsTiny q2 then
-                test (-b / (2.0 * a))
-
-            elif q2 < 0.0 then
-                []
-            else
-                let q = sqrt q2
-                let t1 = (-b + q) / (2.0 * a)
-                let t2 = (-b - q) / (2.0 * a)
-                test t1 @ test t2
-
-        let bezier2Line (epsilon : float) (p0 : V2d) (p1 : V2d) (p2 : V2d) (q0 : V2d) (q1 : V2d) =
-            // p0*(1-t0)^2 + p1*t0*(1-t0) + p2*t0^2 = o + t1*d
-
-            // p0.X*(1-t0)^2 + p1.X*t0*(1-t0) + p2.X*t0^2 = o.X + t1*d.X
-            // p0.Y*(1-t0)^2 + p1.Y*t0*(1-t0) + p2.Y*t0^2 = o.Y + t1*d.Y
-        
-            //  p0.X*d.Y*(1-t0)^2 + p1.X*d.Y*t0*(1-t0) + p2.X*d.Y*t0^2 =  o.X*d.Y + t1*d.X*d.Y
-            // -p0.Y*d.X*(1-t0)^2 - p1.Y*d.X*t0*(1-t0) - p2.Y*d.X*t0^2 = -o.Y*d.X - t1*d.X*d.Y
-        
-            // p0.X*d.Y*(1-t0)^2 + p1.X*d.Y*t0*(1-t0) + p2.X*d.Y*t0^2 - p0.Y*d.X*(1-t0)^2 - p1.Y*d.X*t0*(1-t0) - p2.Y*d.X*t0^2 = o.X*d.Y - o.Y*d.X
-        
-
-            // RHS = o.X*d.Y - o.Y*d.X
-
-            //  p0.X*d.Y*(1 - 2*t0 + t0^2)
-            // +p1.X*d.Y*t0 
-            // -p1.X*d.Y*t0^2
-            // -p2.X*d.Y*t0^2
-            // -p0.Y*d.X*(1 - 2*t0 + t0^2)
-            // -p1.Y*d.X*t0
-            // +p1.Y*d.X*t0^2
-            // -p2.Y*d.X*t0^2
-
-
-            //  p0.X*d.Y
-            // -2*t0*p0.X*d.Y
-            // +p0.X*d.Y*t0^2
-            // +p1.X*d.Y*t0 
-            // -p1.X*d.Y*t0^2
-            // -p2.X*d.Y*t0^2
-            // -p0.Y*d.X
-            // +2*t0*p0.Y*d.X
-            // -p0.Y*d.X*t0^2
-            // -p1.Y*d.X*t0
-            // +p1.Y*d.X*t0^2
-            // -p2.Y*d.X*t0^2
-        
-
-            let o = q0
-            let d = q1 - q0
-            let dp0 = d.X*p0.Y - d.Y*p0.X
-            let dp1 = d.X*p1.Y - d.Y*p1.X
-            let dp2 = d.X*p2.Y - d.Y*p2.X
-            let do0 = d.X*o.Y - d.Y*o.X
-
-            let a = dp0 - dp1 + dp2
-            let b = -2.0 * dp0 - dp1
-            let c = dp0 - do0
-        
-            // p0*(1-t)^2 + p1*t*(1-t) + p2*t^2 = pt
-            // p0 - 2*p0*t + p0*t^2 + p1*t - p1*t^2 + p2*t^2 = pt
-        
-            // t^2*(p0 - p1 + p2) + t*(p1 - 2*p0) + (p0 - pt) = 0
-
-            let inline test (tl : float) =
-                if tl >= -epsilon && tl <= 1.0 + epsilon then
-                    let pt = o + d * tl
-                    match findBezierT epsilon pt p0 p1 p2 with
-                    | Some tb -> [tb, tl]
-                    | None -> []
-                else
-                    []
-
-        
-            let q2 = sqr b -  4.0 * a * c
-            if Fun.IsTiny(q2) then
-                test (-b / (2.0 * a))
-            elif q2 < 0.0 then
-                []
-            else
-                let q = sqrt q2
-                let t0 = (-b + q) / (2.0 * a)
-                let t1 = (-b - q) / (2.0 * a)
-                test t0 @ test t1
-
-        let bezier2 (epsilon : float) (p0 : V2d) (p1 : V2d) (p2 : V2d) (q0 : V2d) (q1 : V2d) (q2 : V2d) =
-            let f0 =
-               -4.0*q0.Y*q1.X*q1.Y*q2.X + 4.0*q0.X*sqr(q1.Y)*q2.X + sqr(q0.Y)*sqr(q2.X) + sqr(p0.Y)*sqr(q0.X - 2.0*q1.X + q2.X) + 4.0*q0.Y*sqr(q1.X)*q2.Y - 4.0*q0.X*q1.X*q1.Y*q2.Y - 2.0*q0.X*q0.Y*q2.X*q2.Y + sqr(q0.X)*sqr(q2.Y) + sqr(p0.X)*sqr(q0.Y - 2.0*q1.Y + q2.Y) - 
-                2.0*p0.Y*(-2.0*q0.X*q1.X*q1.Y + 4.0*q0.X*q1.Y*q2.X - 2.0*q1.X*q1.Y*q2.X + q0.Y*(2.0*sqr(q1.X) - q0.X*q2.X - 2.0*q1.X*q2.X + sqr(q2.X)) + sqr(q0.X)*q2.Y - 2.0*q0.X*q1.X*q2.Y + 2.0*sqr(q1.X)*q2.Y - q0.X*q2.X*q2.Y + p0.X*(q0.X - 2.0*q1.X + q2.X)*(q0.Y - 2.0*q1.Y + q2.Y)) + 
-                2.0*p0.X*(-(sqr(q0.Y)*q2.X) + 2.0*q1.Y*(-(q1.Y*q2.X) + q1.X*q2.Y) + q0.Y*(2.0*q1.Y*q2.X + 2.0*q1.X*(q1.Y - 2.0*q2.Y) + (q0.X + q2.X)*q2.Y) - q0.X*(2.0*sqr(q1.Y) - 2.0*q1.Y*q2.Y + sqr(q2.Y)))
-        
-            let f1 =
-                -4.0*(2.0*p1.Y*q0.Y*sqr(q1.X) - 2.0*p1.Y*q0.X*q1.X*q1.Y - 2.0*p1.X*q0.Y*q1.X*q1.Y + 2.0*p1.X*q0.X*sqr(q1.Y) - p1.Y*q0.X*q0.Y*q2.X + p1.X*sqr(q0.Y)*q2.X - 2.0*p1.Y*q0.Y*q1.X*q2.X + 4.0*p1.Y*q0.X*q1.Y*q2.X - 2.0*p1.X*q0.Y*q1.Y*q2.X - 2.0*p1.Y*q1.X*q1.Y*q2.X + 2.0*p1.X*sqr(q1.Y)*q2.X + 
-                     p1.Y*q0.Y*sqr(q2.X) + sqr(p0.Y)*sqr(q0.X - 2.0*q1.X + q2.X) + p1.Y*sqr(q0.X)*q2.Y - p1.X*q0.X*q0.Y*q2.Y - 2.0*p1.Y*q0.X*q1.X*q2.Y + 4.0*p1.X*q0.Y*q1.X*q2.Y + 2.0*p1.Y*sqr(q1.X)*q2.Y - 2.0*p1.X*q0.X*q1.Y*q2.Y - 2.0*p1.X*q1.X*q1.Y*q2.Y - p1.Y*q0.X*q2.X*q2.Y - p1.X*q0.Y*q2.X*q2.Y + 
-                     p1.X*q0.X*sqr(q2.Y) + sqr(p0.X)*sqr(q0.Y - 2.0*q1.Y + q2.Y) + p0.Y*(p1.X*q0.X*q0.Y - 2.0*p1.X*q0.Y*q1.X - 2.0*q0.Y*sqr(q1.X) - 2.0*p1.X*q0.X*q1.Y + 4.0*p1.X*q1.X*q1.Y + 2.0*q0.X*q1.X*q1.Y + p1.X*q0.Y*q2.X + q0.X*q0.Y*q2.X + 2.0*q0.Y*q1.X*q2.X - 2.0*p1.X*q1.Y*q2.X - 4.0*q0.X*q1.Y*q2.X + 
-                        2.0*q1.X*q1.Y*q2.X - q0.Y*sqr(q2.X) - p1.Y*sqr(q0.X - 2.0*q1.X + q2.X) + p1.X*q0.X*q2.Y - sqr(q0.X)*q2.Y - 2.0*p1.X*q1.X*q2.Y + 2.0*q0.X*q1.X*q2.Y - 2.0*sqr(q1.X)*q2.Y + p1.X*q2.X*q2.Y + q0.X*q2.X*q2.Y - 2.0*p0.X*(q0.X - 2.0*q1.X + q2.X)*(q0.Y - 2.0*q1.Y + q2.Y)) + 
-                     p0.X*(2.0*q0.Y*q1.X*q1.Y - 2.0*q0.X*sqr(q1.Y) - sqr(q0.Y)*q2.X + 2.0*q0.Y*q1.Y*q2.X - 2.0*sqr(q1.Y)*q2.X + q0.X*q0.Y*q2.Y - 4.0*q0.Y*q1.X*q2.Y + 2.0*q0.X*q1.Y*q2.Y + 2.0*q1.X*q1.Y*q2.Y + q0.Y*q2.X*q2.Y - q0.X*sqr(q2.Y) + p1.Y*(q0.X - 2.0*q1.X + q2.X)*(q0.Y - 2.0*q1.Y + q2.Y) - 
-                        p1.X*sqr(q0.Y - 2.0*q1.Y + q2.Y)))
-
-            let f2 =
-              2.0*(-(p0.X*p2.Y*q0.X*q0.Y) + 3.0*sqr(p0.X)*sqr(q0.Y) - 6.0*p0.X*p1.X*sqr(q0.Y) + 2.0*sqr(p1.X)*sqr(q0.Y) + p0.X*p2.X*sqr(q0.Y) + 2.0*p0.X*p2.Y*q0.Y*q1.X - 2.0*p2.Y*q0.Y*sqr(q1.X) + 2.0*p0.X*p2.Y*q0.X*q1.Y - 12.0*sqr(p0.X)*q0.Y*q1.Y + 24.0*p0.X*p1.X*q0.Y*q1.Y - 
-                 8.0*sqr(p1.X)*q0.Y*q1.Y - 4.0*p0.X*p2.X*q0.Y*q1.Y - 4.0*p0.X*p2.Y*q1.X*q1.Y + 2.0*p2.Y*q0.X*q1.X*q1.Y + 2.0*p0.X*q0.Y*q1.X*q1.Y - 4.0*p1.X*q0.Y*q1.X*q1.Y + 2.0*p2.X*q0.Y*q1.X*q1.Y + 12.0*sqr(p0.X)*sqr(q1.Y) - 24.0*p0.X*p1.X*sqr(q1.Y) + 8.0*sqr(p1.X)*sqr(q1.Y) + 
-                 4.0*p0.X*p2.X*sqr(q1.Y) - 2.0*p0.X*q0.X*sqr(q1.Y) + 4.0*p1.X*q0.X*sqr(q1.Y) - 2.0*p2.X*q0.X*sqr(q1.Y) - p0.X*p2.Y*q0.Y*q2.X + p2.Y*q0.X*q0.Y*q2.X - p0.X*sqr(q0.Y)*q2.X + 2.0*p1.X*sqr(q0.Y)*q2.X - p2.X*sqr(q0.Y)*q2.X + 2.0*p2.Y*q0.Y*q1.X*q2.X + 2.0*p0.X*p2.Y*q1.Y*q2.X - 
-                 4.0*p2.Y*q0.X*q1.Y*q2.X + 2.0*p0.X*q0.Y*q1.Y*q2.X - 4.0*p1.X*q0.Y*q1.Y*q2.X + 2.0*p2.X*q0.Y*q1.Y*q2.X + 2.0*p2.Y*q1.X*q1.Y*q2.X - 2.0*p0.X*sqr(q1.Y)*q2.X + 4.0*p1.X*sqr(q1.Y)*q2.X - 2.0*p2.X*sqr(q1.Y)*q2.X - p2.Y*q0.Y*sqr(q2.X) + 3.0*sqr(p0.Y)*sqr(q0.X - 2.0*q1.X + q2.X) + 
-                 2.0*sqr(p1.Y)*sqr(q0.X - 2.0*q1.X + q2.X) - p0.X*p2.Y*q0.X*q2.Y - p2.Y*sqr(q0.X)*q2.Y + 6.0*sqr(p0.X)*q0.Y*q2.Y - 12.0*p0.X*p1.X*q0.Y*q2.Y + 4.0*sqr(p1.X)*q0.Y*q2.Y + 2.0*p0.X*p2.X*q0.Y*q2.Y + p0.X*q0.X*q0.Y*q2.Y - 2.0*p1.X*q0.X*q0.Y*q2.Y + p2.X*q0.X*q0.Y*q2.Y + 
-                 2.0*p0.X*p2.Y*q1.X*q2.Y + 2.0*p2.Y*q0.X*q1.X*q2.Y - 4.0*p0.X*q0.Y*q1.X*q2.Y + 8.0*p1.X*q0.Y*q1.X*q2.Y - 4.0*p2.X*q0.Y*q1.X*q2.Y - 2.0*p2.Y*sqr(q1.X)*q2.Y - 12.0*sqr(p0.X)*q1.Y*q2.Y + 24.0*p0.X*p1.X*q1.Y*q2.Y - 8.0*sqr(p1.X)*q1.Y*q2.Y - 4.0*p0.X*p2.X*q1.Y*q2.Y + 2.0*p0.X*q0.X*q1.Y*q2.Y - 
-                 4.0*p1.X*q0.X*q1.Y*q2.Y + 2.0*p2.X*q0.X*q1.Y*q2.Y + 2.0*p0.X*q1.X*q1.Y*q2.Y - 4.0*p1.X*q1.X*q1.Y*q2.Y + 2.0*p2.X*q1.X*q1.Y*q2.Y - p0.X*p2.Y*q2.X*q2.Y + p2.Y*q0.X*q2.X*q2.Y + p0.X*q0.Y*q2.X*q2.Y - 2.0*p1.X*q0.Y*q2.X*q2.Y + p2.X*q0.Y*q2.X*q2.Y + 3.0*sqr(p0.X)*sqr(q2.Y) - 6.0*p0.X*p1.X*sqr(q2.Y) + 
-                 2.0*sqr(p1.X)*sqr(q2.Y) + p0.X*p2.X*sqr(q2.Y) - p0.X*q0.X*sqr(q2.Y) + 2.0*p1.X*q0.X*sqr(q2.Y) - p2.X*q0.X*sqr(q2.Y) - 
-                 p0.Y*(6.0*p0.X*q0.X*q0.Y - 6.0*p1.X*q0.X*q0.Y + p2.X*q0.X*q0.Y - 12.0*p0.X*q0.Y*q1.X + 12.0*p1.X*q0.Y*q1.X - 2.0*p2.X*q0.Y*q1.X + 2.0*q0.Y*sqr(q1.X) - 12.0*p0.X*q0.X*q1.Y + 12.0*p1.X*q0.X*q1.Y - 2.0*p2.X*q0.X*q1.Y + 24.0*p0.X*q1.X*q1.Y - 24.0*p1.X*q1.X*q1.Y + 4.0*p2.X*q1.X*q1.Y - 2.0*q0.X*q1.X*q1.Y + 
-                    6.0*p0.X*q0.Y*q2.X - 6.0*p1.X*q0.Y*q2.X + p2.X*q0.Y*q2.X - q0.X*q0.Y*q2.X - 2.0*q0.Y*q1.X*q2.X - 12.0*p0.X*q1.Y*q2.X + 12.0*p1.X*q1.Y*q2.X - 2.0*p2.X*q1.Y*q2.X + 4.0*q0.X*q1.Y*q2.X - 2.0*q1.X*q1.Y*q2.X + q0.Y*sqr(q2.X) + 6.0*p1.Y*sqr(q0.X - 2.0*q1.X + q2.X) - p2.Y*sqr(q0.X - 2.0*q1.X + q2.X) + 
-                    6.0*p0.X*q0.X*q2.Y - 6.0*p1.X*q0.X*q2.Y + p2.X*q0.X*q2.Y + sqr(q0.X)*q2.Y - 12.0*p0.X*q1.X*q2.Y + 12.0*p1.X*q1.X*q2.Y - 2.0*p2.X*q1.X*q2.Y - 2.0*q0.X*q1.X*q2.Y + 2.0*sqr(q1.X)*q2.Y + 6.0*p0.X*q2.X*q2.Y - 6.0*p1.X*q2.X*q2.Y + p2.X*q2.X*q2.Y - q0.X*q2.X*q2.Y) + 
-                 2.0*p1.Y*(2.0*q0.Y*sqr(q1.X) - 2.0*q0.X*q1.X*q1.Y - q0.X*q0.Y*q2.X - 2.0*q0.Y*q1.X*q2.X + 4.0*q0.X*q1.Y*q2.X - 2.0*q1.X*q1.Y*q2.X + q0.Y*sqr(q2.X) + sqr(q0.X)*q2.Y - 2.0*q0.X*q1.X*q2.Y + 2.0*sqr(q1.X)*q2.Y - q0.X*q2.X*q2.Y + 3.0*p0.X*(q0.X - 2.0*q1.X + q2.X)*(q0.Y - 2.0*q1.Y + q2.Y) - 
-                    2.0*p1.X*(q0.X - 2.0*q1.X + q2.X)*(q0.Y - 2.0*q1.Y + q2.Y)))
-
-            let f3 =
-                -4.0*(p2.Y*q0.X - p0.X*q0.Y + 2.0*p1.X*q0.Y - p2.X*q0.Y - 2.0*p2.Y*q1.X + 2.0*p0.X*q1.Y - 4.0*p1.X*q1.Y + 2.0*p2.X*q1.Y + p2.Y*q2.X + p0.Y*(q0.X - 2.0*q1.X + q2.X) - 2.0*p1.Y*(q0.X - 2.0*q1.X + q2.X) - p0.X*q2.Y + 2.0*p1.X*q2.Y - p2.X*q2.Y)*
-                    (p0.Y*(q0.X - 2.0*q1.X + q2.X) - p1.Y*(q0.X - 2.0*q1.X + q2.X) - (p0.X - p1.X)*(q0.Y - 2.0*q1.Y + q2.Y))
-        
-            let f4 = 
-                sqr(-(p2.Y*q0.X) + p0.X*q0.Y - 2.0*p1.X*q0.Y + p2.X*q0.Y + 2.0*p2.Y*q1.X - 2.0*p0.X*q1.Y + 4.0*p1.X*q1.Y - 2.0*p2.X*q1.Y - p2.Y*q2.X - p0.Y*(q0.X - 2.0*q1.X + q2.X) + 2.0*p1.Y*(q0.X - 2.0*q1.X + q2.X) + p0.X*q2.Y - 2.0*p1.X*q2.Y + p2.X*q2.Y)
-
-            let struct (t0, t1, t2, t3) = Polynomial.RealRootsOf(f4, f3, f2, f1, f0)
-
-            let inline evalP (t : float) =
-                if t >= -epsilon && t <= 1.0 + epsilon then
-                    let s = 1.0 - t
-                    Some (p0*s*s + 2.0*p1*s*t + p2*t*t)
-                else
-                    None
-
-            let inline evalQ (t : float) =
-                if t >= -epsilon && t <= 1.0 + epsilon then
-                    let s = 1.0 - t
-                    Some (q0*s*s + 2.0*q1*s*t + q2*t*t)
-                else
-                    None
-                
-            let test (tp : float) =
-                match evalP tp with
-                | Some pp ->
-                    match findBezierT epsilon pp q0 q1 q2 with
-                    | Some tq ->
-                        match evalQ tq with
-                        | Some pq ->
-                            if Fun.ApproximateEquals(pq, pp, epsilon) then [tp, tq]
-                            else []
-                        | None ->
-                            []
-                    | None ->
-                        []
-                | None ->
-                    []
-
-            let res = test t0 @ test t1 @ test t2 @ test t3
-            res
-
-        let ellipses (epsilon : float) (e0 : Ellipse2d) (e1 : Ellipse2d) =
-            let m = M33d.FromCols(V3d(e0.Axis0, 0.0), V3d(e0.Axis1, 0.0), V3d(e0.Center, 1.0))
-            let mi = m.Inverse
-
-            let c = mi.TransformPos e1.Center
-            let a = mi.TransformDir e1.Axis0
-            let b = mi.TransformDir e1.Axis1
-
-            // |c + cos t * a + sin t * b| = 1
-            // |c + cos t * a + sin t * b|^2 = 1
-            // <c + cos(t)*a + sin(t)*b | c + cos(t)*a + sin(t)*b> = 1
-
-            // <c|c> + cos(t)*<a|c> + sin(t)*<b|c> + 
-            // cos(t)*<a|c> + cos(t)^2*<a|a> + sin(t)*cos(t)*<a|b> + 
-            // sin(t)*<b|c> + sin(t)*cos(t)*<a|b> + sin(t)^2*<b|b> - 1 = 0
-
-            // (cos(t)^2*<a|a> + sin(t)^2*<b|b>) + 2*(sin(t)*cos(t)*<a|b> + cos(t)*<a|c> + sin(t)*<b|c>) + <c|c> - 1 = 0
-
-            let aa = a.LengthSquared
-            let bb = b.LengthSquared
-            let cc = c.LengthSquared
-            let ab = Vec.dot a b
-            let ac = Vec.dot a c
-            let bc = Vec.dot b c
-
-
-            // (c^2*<a|a> + s^2*<b|b>) + 2*(s*c*<a|b> + c*<a|c> + s*<b|c>) + <c|c> - 1 = 0
-            // c^2*aa + s^2*bb + 2*(s*c*ab + c*ac + s*bc) + cc - 1 = 0
-
-            // Mathematica:
-            // s0 := Eliminate [c^2*aa + s^2*bb + 2*(s*c*ab + c*ac + s*bc) + cc - 1 == 0 && c^2 + s^2 == 1, s]
-            // s1 := SubtractSides[s0][[1]]
-            // FullSimplify[Coefficient[s1, c, 0]]
-            let f0 = (-1.0 + bb - 2.0*bc + cc)*(-1.0 + bb + 2.0*bc + cc)
-            let f1 = -8.0*ab*bc + 4.0*ac*(-1.0 + bb + cc)
-            let f2 = 2.0*(-2.0*sqr(ab) + 2.0*sqr(ac) + bb + 2.0*sqr(bc) + aa*(-1.0 + bb + cc) - bb*(bb + cc))
-            let f3 = 4.0*aa*ac - 4.0*ac*bb + 8.0*ab*bc
-            let f4 = 4.0*sqr(ab) + sqr(aa - bb)
-            let struct(c0, c1, c2, c3) = Polynomial.RealRootsOf(f4, f3, f2, f1, f0)
-
-            let g0 = (-1.0 + aa - 2.0*ac + cc)*(-1.0 + aa + 2.0*ac + cc)
-            let g1 = -8.0*ab*ac + 4.0*bc*(-1.0 + aa + cc)
-            let g2 = -2.0*(sqr(aa) + 2.0*sqr(ab) - 2.0*sqr(ac) + bb - 2.0*sqr(bc) - bb*cc + aa*(-1.0 - bb + cc))
-            let g3 = 8.0*ab*ac + 4.0*(-aa + bb)*bc
-            let g4 = 4.0*sqr(ab) + sqr(aa - bb)
-            let struct(s0, s1, s2, s3) = Polynomial.RealRootsOf(g4, g3, g2, g1, g0)
-
-           
-            let add (v0 : float, v1 : float) (l : list<float * float>) =
-                let exists = l |> List.exists (fun (va, vb) -> Fun.ApproximateEquals(v0, va, 1E-8) && Fun.ApproximateEquals(v1, vb, 1E-8))
-                if exists then l
-                else (v0, v1) :: l
-
-            let sols =
-                let mutable sols = []
-                for c in [c0;c1;c2;c3] do
-                    if c >= -1.0 && c <= 1.0 then 
-                        let s = sqrt(1.0 - sqr c)
-                        sols <- sols |> add (c, s) |> add (c, -s)
-                    
-                for s in [s0;s1;s2;s3] do
-                    if s >= -1.0 && s <= 1.0 then 
-                        let c = sqrt(1.0 - sqr s)
-                        sols <- sols |> add (c, s) |> add (-c, s)
-
-                sols
-
-            let rec getSolutions (acc : list<float * float>) (l : list<float * float>) =
-                match l with
-                | [] -> acc
-                | (cos, sin) :: t ->
-                    let p = c + cos*a + sin*b
-                    let v = Fun.ApproximateEquals(Vec.length p, 1.0, epsilon)
-                    if v then
-                        let a0 = atan2 p.Y p.X
-                        let a1 = atan2 sin cos
-
-                        let p0 = e0.GetPoint a0
-                        let p1 = e1.GetPoint a1
-                        if Fun.ApproximateEquals(p0, p1, epsilon) then
-                            getSolutions ((a0, a1) :: acc) t
-                        else
-                            getSolutions acc t
-                    else
-                        getSolutions acc t
-
-                    
-
-
-
-            let solutions = getSolutions [] sols |> List.sort
-
-
-            solutions
-
-        let arcs (epsilon : float) (a0 : float) (da : float) (a : Ellipse2d) (b0 : float) (db : float) (b : Ellipse2d) =
-            ellipses epsilon a b |> List.choose (fun (a, b) ->
-                let ta = arcT a0 da a
-                let tb = arcT b0 db b
-                if ta >= -epsilon && ta <= 1.0 + epsilon && tb >= -epsilon && tb <= 1.0 + epsilon then
-                    Some (ta, tb)
-                else
-                    None
-            )
-        
-        let bezier2Ellipse (epsilon : float) (p0 : V2d) (p1 : V2d) (p2 : V2d) (e : Ellipse2d) =
-            let m = M33d.FromCols(V3d(e.Axis0, 0.0), V3d(e.Axis1, 0.0), V3d(e.Center, 1.0))
-            let mi = m.Inverse
-
-            let q0 = mi.TransformPos p0
-            let q1 = mi.TransformPos p1
-            let q2 = mi.TransformPos p2
-
-            let a = q0 - 2.0*q1 + q2
-            let b = 2.0*q1 - 2.0*q0
-            let c = q0
-
-            // |a*t^2 + b*t + c| = 1
-            // <a*t^2 + b*t + c | a*t^2 + b*t + c > = 1
-        
-            // t^4*<a|a> + t^3*<a|b> + t^2*<a|c> +
-            // t^3*<a|b> + t^2*<b|b> + t*<b|c> +
-            // t^2*<a|c> + t*<b|c> + <c|c> - 1 = 0
-
-            // t^4*(<a|a>) + t^3*(2*<a|b>) + t^2*(2*<a|c> + <b|b>) + t*(2*<b|c>) + (<c|c> - 1) = 0
-
-            let f0 = c.LengthSquared - 1.0
-            let f1 = 2.0 * Vec.dot b c
-            let f2 = 2.0 * Vec.dot a c + b.LengthSquared
-            let f3 = 2.0 * Vec.dot a b
-            let f4 = a.LengthSquared
-
-            let struct (t0, t1, t2, t3) = Polynomial.RealRootsOf(f4, f3, f2, f1, f0)
-
-            [t0; t1; t2; t3] |> List.choose (fun t ->
-                if t >= -epsilon && t <= 1.0 + epsilon then
-                    let p = a*sqr t + b*t+c
-                    let alpha = atan2 p.Y p.X
-                    Some (t, alpha)
-                else
-                    None
-            )
-
-        let bezier2Arc (epsilon : float) (p0 : V2d) (p1 : V2d) (p2 : V2d) (alpha0 : float) (dAlpha : float) (e : Ellipse2d) =
-            bezier2Ellipse epsilon p0 p1 p2 e |> List.choose (fun (t, a) ->
-                let te = arcT alpha0 dAlpha a
-                if te >= -epsilon && te <= 1.0 + epsilon then
-                    Some (t, te)
-                else
-                    None
-            )
-            
-        let bezier3Line (epsilon : float) (p0 : V2d) (p1 : V2d) (p2 : V2d) (p3 : V2d) (q0 : V2d) (q1 : V2d) =
-            
-            let a = -p0 + 3.0*p1 - 3.0*p2 + p3
-            let b = 3.0*p0 - 6.0*p1 + 3.0*p2
-            let c = 3.0*p1 - 3.0*p0
-            let d = p0
-
-            let o = q0
-            let v = q1 - q0
-
-            // v*t + o = a*s^3 + b*s^2 + c*s + d
-
-            // v.X*t + o.X = a.X*s^3 + b.X*s^2 + c.X*s + d.X
-            // v.Y*t + o.Y = a.Y*s^3 + b.Y*s^2 + c.Y*s + d.Y
-
-            
-            // v.Y*v.X*t + v.Y*o.X = v.Y*a.X*s^3 + v.Y*b.X*s^2 + v.Y*c.X*s + v.Y*d.X
-            // -v.X*v.Y*t - v.X*o.Y = -v.X*a.Y*s^3 - v.X*b.Y*s^2 - v.X*c.Y*s - v.X*d.Y
-
-            // 0 = s^3*(v.Y*a.X - v.X*a.Y) + s^2*(v.Y*b.X - v.X*b.Y) + s*(v.Y*c.X - v.X*c.Y) + (v.Y*d.X - v.X*d.Y - v.Y*o.X + v.X*o.Y)
-
-            let f3 = v.Y*a.X - v.X*a.Y
-            let f2 = v.Y*b.X - v.X*b.Y
-            let f1 = v.Y*c.X - v.X*c.Y
-            let f0 = v.Y*d.X - v.X*d.Y - v.Y*o.X + v.X*o.Y
-            let struct (s0, s1, s2) = Polynomial.RealRootsOf(f3, f2, f1, f0)
-
-            [s0;s1;s2] |> List.choose (fun ts ->
-                if ts >= -epsilon && ts <= 1.0 + epsilon then
-                    let ts2 = sqr ts
-                    let pt = a*ts*ts2 + b*ts2 + c*ts + d
-                    let tl = Vec.dot v (pt - o) / v.LengthSquared
-                    if tl >= -epsilon && tl <= 1.0 + epsilon then
-                        Some (ts, tl)
-                    else
-                        None
-                else
-                    None
-            )
-
-    
-    let rec intersections (eps : float) (a : PathSegment) (b : PathSegment) : list<float * float> =
-        match a, b with
-        | Line(a0, a1), Line(b0, b1) ->
-            lines eps a0 a1 b0 b1
-
-        | Line(a0, a1), Bezier2(b0, b1, b2) ->
-            bezier2Line eps b0 b1 b2 a0 a1 
-            |> List.map flip
-            |> List.sortBy fst
-            
-        | Line(a0, a1), Arc(_, _, b0, db, b) ->
-            arcLine eps b0 db b a0 a1
-            |> List.map flip
-            |> List.sortBy fst
-
-        | Line(a0, a1), Bezier3(b0, b1, b2, b3) ->
-            bezier3Line eps b0 b1 b2 b3 a0 a1
-            |> List.map flip
-            |> List.sortBy fst
-
-        | Bezier2(a0, a1, a2), Line(b0, b1) ->
-            bezier2Line eps a0 a1 a2 b0 b1
-            |> List.sortBy fst
-            
-        | Bezier2(a0, a1, a2), Bezier2(b0, b1, b2) ->
-            bezier2 eps a0 a1 a2 b0 b1 b2
-            |> List.sortBy fst
-
-        | Bezier2(a0, a1, a2), Arc(_, _, b0, db, b) ->
-            bezier2Arc eps a0 a1 a2 b0 db b
-            |> List.sortBy fst
-            
-        | Bezier2(a0, a1, a2), Bezier3(b0, b1, b2, b3) ->
-            failwith "not implemented"
-
-        | Arc(_, _, a0, da, a), Line(b0, b1) ->
-            arcLine eps a0 da a b0 b1
-            |> List.sortBy fst
-        
-        | Arc(_, _, a0, da, a), Bezier2(b0, b1, b2) ->
-            bezier2Arc eps b0 b1 b2 a0 da a
-            |> List.map flip
-            |> List.sortBy fst
-            
-        | Arc(_, _, a0, da, a), Arc(_, _, b0, db, b) ->
-            arcs eps a0 da a b0 db b
-            |> List.sortBy fst
-            
-        | Arc(_, _, a0, da, a), Bezier3(b0, b1, b2, b3) ->
-            failwith "not implemented"
-
-        | Bezier3(a0, a1, a2, a3), Line(b0, b1) ->
-            bezier3Line eps a0 a1 a2 a3 b0 b1
-            |> List.sortBy fst
-            
-        | Bezier3(a0, a1, a2, a3), Bezier2(b0, b1, b2) ->
-            failwith "not implemented"
-
-        | Bezier3(a0, a1, a2, a3), Arc(_, _, b0, db, b) ->
-            failwith "not implemented"
-
-        | Bezier3(a0, a1, a2, a3), Bezier3(b0, b1, b2, b3) ->
-            failwith "not implemented"
-            
 
 module Stroke = 
     open Aardvark.Rendering.Text
 
     let rec intersect (epsilon : float) (a : PathSegment) (b : PathSegment) : option<float * float> =
-        Intersections.intersections epsilon a b |> List.tryHead
+        PathSegment.intersections epsilon a b |> List.tryHead
 
     let rec private tryClip (a : PathSegment) (b : seq<int * PathSegment>) : option<option<PathSegment> * int * option<PathSegment>> =
         let a1 = PathSegment.startPoint a
@@ -1242,6 +751,12 @@ let ellipseTest() =
   
     Ag.initialize()
     Aardvark.Init()
+    
+    
+    let rand = RandomSystem()
+    for i in 1 .. 10000 do rand.UniformDouble() |> ignore
+
+    
     use app = new OpenGlApplication()
     use win = app.CreateGameWindow(8)
     let proj = win.Sizes |> AVal.map (fun s -> Trafo3d.Scale(float s.Y / float s.X, 1.0, 1.0))
@@ -1255,10 +770,26 @@ let ellipseTest() =
         )
     )
 
+
+    let ts = List.init 10 (fun _ -> rand.UniformDouble())
     let e0s = 
         [
-            PathSegment.bezier2 (V2d(-0.5,0.0)) (V2d(0.0, 0.5)) (V2d(0.5, 0.0))
-            PathSegment.arc 0.0 -Constant.Pi (Ellipse2d(V2d(0.0, -0.2), 0.5*V2d.IO, 0.5*V2d.OI))
+            //PathSegment.bezier2 (V2d(-0.5,0.0)) (V2d(0.0, 0.5)) (V2d(0.5, 0.0))
+            //PathSegment.arc 0.0 -Constant.Pi (Ellipse2d(V2d(0.0, -0.2), 0.5*V2d.IO, 0.5*V2d.OI))
+            
+            let trafo = Trafo2d.Rotation(Constant.PiHalf)
+
+            let p0 = V2d(-0.5,-0.5)  |> trafo.Forward.TransformPos
+            let p1 = V2d(3.0, -0.5) |> trafo.Forward.TransformPos
+            let p2 = V2d(-3.0, 0.5) |> trafo.Forward.TransformPos
+            let p3 = V2d(0.5, 0.5) |> trafo.Forward.TransformPos
+
+            yield! PathSegment.bezier3 p0 p1 p2 p3 |> PathSegment.splitMany ts
+
+
+            yield! PathSegment.arc 0.0 -Constant.PiTimesTwo (Ellipse2d(V2d.Zero, 0.7 * V2d.IO, 0.5 * V2d.OI)) |> PathSegment.splitMany ts
+
+            //PathSegment.bezier3 (V2d(-0.5,-0.2)) (V2d(-0.2, 0.7)) (V2d(0.2, 0.7)) (V2d(0.5, -0.2))
         ]
 
     let e1 = 
@@ -1275,55 +806,78 @@ let ellipseTest() =
 
             let cc = proj.GetValue().Backward.TransformPosProj ndc |> Vec.xy
 
-            let e = Ellipse2d(cc, scale * 0.3*V2d.IO, scale * 0.2*V2d.OI)
-            PathSegment.arc 0.0 -Constant.Pi e
+            let e = Ellipse2d(cc, scale * 0.2*V2d.IO, scale * 0.3*V2d.OI)
+            //PathSegment.arc 0.0 -Constant.Pi e
+
+            let trafo = Trafo2d.Scale(scale) * Trafo2d.Translation(cc)
+
+            let p0 = V2d(-0.5,-0.5)  |> trafo.Forward.TransformPos
+            let p1 = V2d(3.0, -0.5) |> trafo.Forward.TransformPos
+            let p2 = V2d(-3.0, 0.5) |> trafo.Forward.TransformPos
+            let p3 = V2d(0.5, 0.5) |> trafo.Forward.TransformPos
+
+
+            PathSegment.arc 0.0 -Constant.PiTimesTwo e
+            //PathSegment.bezier3 p0 p1 p2 p3
+
         )
 
     let intersections =
+        let mutable lastPrint = -1
         e1 |> AVal.map (fun e1 ->   
-            e0s |> List.toArray |> Array.collect (fun e0 ->
-                Intersections.intersections 1E-8 e0 e1 
-                |> List.toArray
-                |> Array.map (fun (t0, t1) ->
-                    let p0 = PathSegment.point t0 e0
-                    let p1 = PathSegment.point t1 e1
-                    V3f(V2f p0, -1.0f), V3f(V2f p1, -1.0f)
+            let a, b =
+                e0s |> List.toArray |> Array.collect (fun e0 ->
+                    let intersections = PathSegment.intersections 1E-7 e0 e1 
+                    intersections
+                    |> List.toArray
+                    |> Array.map (fun (t0, t1) ->
+                        let p0 = PathSegment.point t0 e0
+                        let p1 = PathSegment.point t1 e1
+                        V3f(V2f p0, -1.0f), V3f(V2f p1, -0.9f)
+                    )
                 )
+                |> Array.unzip
+            if a.Length <> lastPrint then
+                lastPrint <- a.Length
+                Report.Line("{0}", a.Length)
+            a, b
+        )
+
+    let toGeometry (color : C4b) (s : aval<PathSegment>) =
+        let positions = 
+            s |> AVal.map (fun s ->
+                let lines = System.Collections.Generic.List<V3f>()
+                let div = 128
+                let step = 1.0 / float div
+
+                let mutable last = PathSegment.startPoint s
+                let mutable t = step
+                for i in 0 .. div - 1 do
+                    let pt = PathSegment.point t s
+                    lines.Add (V3f(V2f last, 0.0f))
+                    lines.Add (V3f(V2f pt, 0.0f))
+                    last <- pt
+                    t <- t + step
+                lines.ToArray()
             )
-            |> Array.unzip
-            //match alphas with
-            //| Some (t0, t1) ->
-            //    let p0 = PathSegment.point t0 e0
-            //    let p1 = PathSegment.point t1 e1
-            //    Log.line "%.3f %.3f" t0 t1
-            //    [|V3f(V2f p0, -1.0f)|], [|V3f(V2f p1, -1.0f)|]
-            //| None ->
-            //    [||], [||]
-            //alphas |> List.toArray |> Array.map (fun (a0, a1) ->
-            //    let p0 = e0.GetPoint a0
-            //    let p1 = e1.GetPoint a1
-            //    V3f(V2f p0, -1.0f), V3f(V2f p1, -1.0f)
-            //)
-            //|> Array.unzip
-        )
-
+            
+        Sg.draw IndexedGeometryMode.LineList
+        |> Sg.vertexAttribute DefaultSemantic.Positions positions
+        |> Sg.vertexBufferValue DefaultSemantic.Colors (AVal.constant (color.ToC4f().ToV4f()))
+        
     let shapes =
-        e1 |> AVal.map (fun e1 ->
-            ShapeList.ofList [
-                for e0 in e0s do
-                    ConcreteShape.ofList M33d.Identity C4b.White [
-                        e0
-                        PathSegment.line (PathSegment.endPoint e0) (PathSegment.startPoint e0)
-                    ]
-                ConcreteShape.ofList M33d.Identity C4b.Blue [
-                    e1
-                    PathSegment.line (PathSegment.endPoint e1) (PathSegment.startPoint e1)
-                ]
-            ]
-        )
-
-    let ellipses =
-        Sg.shape shapes
+        Sg.ofList [
+            toGeometry C4b.Blue e1
+            for e0 in e0s do
+                let color = rand.UniformC3f().ToC4b()
+                toGeometry color (AVal.constant e0)
+        ]
+        |> Sg.uniform "LineWidth" (AVal.constant 3.0)
+        |> Sg.shader {
+            do! DefaultSurfaces.trafo
+            do! DefaultSurfaces.thickLine
+            do! DefaultSurfaces.thickLineRoundCaps
+        }
 
 
     let sg = 
@@ -1338,7 +892,7 @@ let ellipseTest() =
             |> Sg.vertexBufferValue DefaultSemantic.Colors (AVal.constant V4f.OIOI)
             |> Sg.uniform "PointSize" (AVal.constant 7.0)
         ]
-        |> Sg.andAlso ellipses
+        |> Sg.andAlso shapes
         |> Sg.projTrafo proj
         |> Sg.shader {
             do! DefaultSurfaces.trafo
@@ -1352,8 +906,8 @@ let ellipseTest() =
 
 [<EntryPoint;STAThread>]
 let main argv = 
-    ellipseTest()
-    Environment.Exit 0
+    //ellipseTest()
+    //Environment.Exit 0
 
     let readShape (path : string) =
 
@@ -1801,9 +1355,9 @@ let main argv =
 
 
 
-    let path = @"C:\Users\Schorsch\Development\SvgDotNet\data\Example.svg" //Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
+    //let path = @"C:\Users\Schorsch\Development\SvgDotNet\data\Example.svg" //Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
 
-    let shapes = readShape path |> cval
+    //let shapes = readShape path |> cval
 
 
 
@@ -1818,14 +1372,14 @@ let main argv =
     let view = initialView |> DefaultCameraController.control win.Mouse win.Keyboard win.Time
     let proj = win.Sizes |> AVal.map (fun s -> Frustum.perspective 60.0 0.1 100.0 (float s.X / float s.Y))
 
-    let trafo = 
-        shapes |> AVal.map (fun shapes ->
-            let bb = shapes.bounds
-            let off = V3d(-bb.Center.XY, 0.0)
-            let scale = 4.0 / bb.Size.NormMax
-            Trafo3d.Translation off *
-            Trafo3d.Scale(scale, -scale, 1.0)
-        )
+    //let trafo = 
+    //    shapes |> AVal.map (fun shapes ->
+    //        let bb = shapes.bounds
+    //        let off = V3d(-bb.Center.XY, 0.0)
+    //        let scale = 4.0 / bb.Size.NormMax
+    //        Trafo3d.Translation off *
+    //        Trafo3d.Scale(scale, -scale, 1.0)
+    //    )
 
     let fill = cval FillMode.Fill
 
@@ -1839,28 +1393,35 @@ let main argv =
                     | _ -> FillMode.Fill
             )
 
-        | Keys.Enter | Keys.R | Keys.F5 ->
-            transact (fun () ->
-                shapes.Value <- readShape path
-            )
+        //| Keys.Enter | Keys.R | Keys.F5 ->
+        //    transact (fun () ->
+        //        shapes.Value <- readShape path
+        //    )
 
         | _ ->
             ()
     )
 
     
-    let _, real =
-        Tessellator.Tessellator.toGeometry LibTessDotNet.Double.WindingRule.EvenOdd [
+    let hull, real =
+        Tessellator.Tessellator.toGeometry LibTessDotNet.Double.WindingRule.NonZero [
 
-            PathSegment.arcSegment (V2d(-1.0, -0.1)) (V2d(0.0, -1.0)) (V2d(1.0, -0.1))
+            PathSegment.arc 0.0 Constant.PiTimesTwo (Ellipse2d(V2d.Zero, 0.5*V2d.IO, 0.5*V2d.OI))
+            //PathSegment.arc 0.0 Constant.PiTimesTwo (Ellipse2d(V2d.Zero, V2d.IO, 0.2*V2d.OI))
+
+            //PathSegment.arcSegment (V2d(-1.0, -0.1)) (V2d(0.0, -1.0)) (V2d(1.0, -0.1))
+
+            
+            PathSegment.bezier3 (V2d(-1.0, -0.1)) (V2d(-0.4,1.7)) (V2d(0.4, -0.4)) (V2d(1.0, -0.1))
+
             PathSegment.line (V2d(1.0, -0.1)) (V2d(1.0, 0.1))
-            PathSegment.bezier2  (V2d(1.0, 0.1)) (V2d(0.0, 1.0)) (V2d(-1.0, 0.1))
+            PathSegment.bezier2  (V2d(1.0, 0.1)) (V2d(0.0, 0.8)) (V2d(-1.0, 0.1))
             PathSegment.line (V2d(-1.0, 0.1)) (V2d(-1.0, -0.1))
             
-            PathSegment.bezier2 (V2d(-0.7, 0.0)) (V2d(0.0, 0.7)) (V2d(0.7, 0.0))
-            PathSegment.arcSegment (V2d(0.7, 0.0)) (V2d(0.0, -0.7)) (V2d(-0.7, 0.0))
+            //PathSegment.bezier2 (V2d(-0.7, 0.0)) (V2d(0.0, 0.7)) (V2d(0.7, 0.0))
+            //PathSegment.arcSegment (V2d(0.7, 0.0)) (V2d(0.0, -0.7)) (V2d(-0.7, 0.0))
 
-            PathSegment.arc  0.0 (4.0 * Constant.PiHalf) (Ellipse2d(V2d.Zero, 0.1*V2d.IO, 0.05*V2d.OI))
+            //PathSegment.arc  0.0 (4.0 * Constant.PiHalf) (Ellipse2d(V2d.Zero, 0.1*V2d.IO, 0.05*V2d.OI))
             //PathSegment.line V2d.OI V2d.OO
             //PathSegment.line V2d.OO V2d.IO
 
@@ -1879,6 +1440,17 @@ let main argv =
                 do! DefaultSurfaces.constantColor C4f.Black
                 do! Shader.pathFragment
             }
+            //Sg.ofList [
+            //    Sg.ofIndexedGeometry hull
+            //]
+            //|> Sg.shader {
+            //    do! Shader.pathVertex
+            //    do! DefaultSurfaces.constantColor (C4f(1.0f, 1.0f, 1.0f, 0.5f))
+            //    do! Shader.pathFragment
+            //}
+            //|> Sg.blendMode (AVal.constant BlendMode.Blend)
+            //|> Sg.depthTest (AVal.constant DepthTestMode.None)
+            //|> Sg.pass (RenderPass.after "" RenderPassOrder.Arbitrary RenderPass.main)
         ]
         |> Sg.uniform "LineWidth" (AVal.constant 5.0)
         //Sg.shape shapes

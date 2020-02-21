@@ -26,12 +26,91 @@ module Tessellator =
             | LinePart of Line2d
 
         module Part =
+
+            let intersectsConvex (eps : float) (l : Polygon2d) (r : Polygon2d) =
+                let tess = Tess()
+
+                let c0 = System.Collections.Generic.List<ContourVertex>()
+                for p in l.Points do c0.Add(ContourVertex(Vec3(X = p.X, Y = p.Y)))
+                c0.Add(c0.[0])
+                
+                let c1 = System.Collections.Generic.List<ContourVertex>()
+                for p in r.Points do c1.Add(ContourVertex(Vec3(X = p.X, Y = p.Y)))
+                c1.Add(c1.[0])
+                tess.AddContour(c0, ContourOrientation.CounterClockwise)
+                tess.AddContour(c1, ContourOrientation.CounterClockwise)
+                tess.Tessellate(WindingRule.AbsGeqTwo, ElementType.BoundaryContours)
+
+                let mutable empty = true
+                let mutable ei = 0
+                for _ in 0 .. tess.ElementCount - 1 do
+                    let o = tess.Elements.[ei]
+                    let c = tess.Elements.[ei+1]
+
+                    let mutable box = Box2d.Invalid
+                    let mutable vi = o
+                    for i in 0 .. c - 1 do
+                        let v = tess.Vertices.[vi]
+                        let p = V2d(v.Position.X, v.Position.Y)
+                        box.ExtendBy p
+                        vi <- vi + 1
+
+                    if box.Size.NormMax > eps then empty <- false
+
+                    ei <- ei + 2
+
+
+                not empty
+
+
+
+            let private linesIntersect (eps : float) (l : Line2d) (r : Line2d) =
+                let lr = l.Ray2d
+                let rr = r.Ray2d
+                let mutable t = 0.0
+                if lr.Intersects(rr, &t) && t >= 1E-8 && t <= 1.0 - 1E-8 then
+                    true
+                else
+                    false
+                    
+            let inline private sgn (eps : float) (v : float) =
+                if v < -eps then -1
+                elif v > eps then 1
+                else 0
+
+            let private polyAndLineIntersect (eps : float) (l : Polygon2d) (r : Line2d) =
+                use e = l.EdgeLines.GetEnumerator()
+
+                let mutable side0 = 0
+                let mutable side1 = 0
+
+                let mutable intersects = false
+                while not intersects && e.MoveNext() do
+                    let ll = e.Current
+
+                    let v0 = r.P0.PosLeftOfLineValue(ll.P0, ll.P1) |> sgn eps
+                    let v1 = r.P1.PosLeftOfLineValue(ll.P0, ll.P1) |> sgn eps
+
+                    if side0 = 0 then side0 <- v0
+                    elif side0 <> v0 then side0 <- 10
+                        
+                    if side1 = 0 then side1 <- v1
+                    elif side1 <> v1 then side1 <- 10
+
+                    if linesIntersect 1E-7 ll r then
+                        intersects <- true
+
+                intersects || (side0 = 1 || side0 = -1) || (side1 = 1 || side1 = -1)
+
+                
+
             let overlaps (l : Part) (r : Part) =
                 match l, r with
-                | LinePart l, LinePart r -> l.Intersects r
-                | PolygonalPart(_,l), LinePart r -> l.Intersects(r)
-                | LinePart l, PolygonalPart(_,r) -> r.Intersects(l)
-                | PolygonalPart(_,l), PolygonalPart(_,r) -> l.Intersects r
+                | LinePart l, LinePart r -> linesIntersect 1E-7 l r
+                | PolygonalPart(_,l), LinePart r -> polyAndLineIntersect 1E-7 l r
+                | LinePart l, PolygonalPart(_,r) -> polyAndLineIntersect 1E-7 r l
+                | PolygonalPart(_,l), PolygonalPart(_,r) -> 
+                    intersectsConvex 1E-6 l r
 
             let ofPathSegment (s : PathSegment) =
                 match s with
@@ -156,7 +235,7 @@ module Tessellator =
             |> not
 
         let hasPoint (bvh : BvhTree2d<int, Triangle2d>) (pt : V2d) =
-            let b = Box2d.FromCenterAndSize(pt, V2d.II * 1E-8)
+            let b = Box2d.FromCenterAndSize(pt, V2d.II * 1E-3)
             bvh.GetIntersecting(b, fun _ _ t -> if Fun.ApproximateEquals(t.P0, pt) || Fun.ApproximateEquals(t.P1, pt) || Fun.ApproximateEquals(t.P2, pt) then Some t else None)
             |> HashMap.isEmpty
             |> not
@@ -170,14 +249,13 @@ module Tessellator =
                 for pt in path do
                     ContourVertex(Vec3(X = pt.X, Y = pt.Y)) |> vertices.Add
 
-                tess.AddContour(vertices)
+                tess.AddContour(vertices, ContourOrientation.Original)
 
             tess.Tessellate(rule, ElementType.BoundaryContours)
         
-            let mutable pi = 0
             let mutable i = 0
             let res = Array.zeroCreate tess.ElementCount
-            for _ in 0 .. tess.ElementCount - 1 do
+            for pi in 0 .. tess.ElementCount - 1 do
                 let i0 = tess.Elements.[i]
                 let cnt = tess.Elements.[i+1]
                 let arr = Array.zeroCreate cnt
@@ -189,7 +267,6 @@ module Tessellator =
                     oi <- oi + 1
 
                 res.[pi] <- arr
-                pi <- pi + 1
                 i <- i + 2
             res
         
@@ -213,7 +290,7 @@ module Tessellator =
 
     
     module private Coords =
-        let bezier3 (p0 : V2d) (p1 : V2d) (p2 : V2d) (p3 : V2d) =
+        let bezier3 (q0 : V2d) (q1 : V2d) (q2 : V2d) (q3 : V2d) =
             let m3 =
                 M44d(
                     +1.0,  0.0,  0.0,  0.0,
@@ -232,10 +309,10 @@ module Tessellator =
 
             let b =
                 M44d.FromRows(
-                    V4d(p0.X, p0.Y, 0.0, 1.0),
-                    V4d(p1.X, p1.Y, 0.0, 1.0),
-                    V4d(p2.X, p2.Y, 0.0, 1.0),
-                    V4d(p3.X, p3.Y, 0.0, 1.0)
+                    V4d(q0.X, q0.Y, 0.0, 1.0),
+                    V4d(q1.X, q1.Y, 0.0, 1.0),
+                    V4d(q2.X, q2.Y, 0.0, 1.0),
+                    V4d(q3.X, q3.Y, 0.0, 1.0)
                 )
 
             let bla = m3 * b
@@ -300,11 +377,9 @@ module Tessellator =
                 let vb = b >= 1E-3 && b <= 1.0 - 1E-3
 
                 if va then 
-                    Log.warn "split %A" a
-                    Choice2Of2 a
+                    Choice2Of2(PathSegment.splitMany [a] (PathSegment.bezier3 q0 q1 q2 q3))
                 elif vb then 
-                    Log.warn "split %A" b
-                    Choice2Of2 b
+                    Choice2Of2(PathSegment.splitMany [b] (PathSegment.bezier3 q0 q1 q2 q3))
                 else
                     let F =
                         M44d(
@@ -345,12 +420,137 @@ module Tessellator =
                 failwith "quadratic"
 
             else
-                failwith "line or point"
+                match PathSegment.tryLine q0 q3 with
+                | Some l -> Choice2Of2 [l]
+                | None -> Choice2Of2 []
 
+    /// tries to split the segment into two new segments having ranges [0;t] and [t;1] respectively.
+    let split (t : float) (pt : V2d) (s : PathSegment) =
+        if t <= 0.0 then (None, Some s)
+        elif t >= 1.0 then (Some s, None)
+        else
+            match s with
+            | Line(p0, p1) ->
+                PathSegment.tryLine p0 pt, PathSegment.tryLine pt p1
+
+            | Arc(p0, p1, a0, da, e) ->
+
+                let l0 = a0
+                let ld = da * t
+
+                let r0 = a0 + ld
+                let rd = da - ld
+
+                let l = PathSegment.ForceArc(p0, pt, l0, ld, e)
+                let r = PathSegment.ForceArc(pt, p1, r0, rd, e)
+
+                Some l, Some r
+                //let left =
+                //    match tryArc l0 ld e with
+                //    | Some(ArcSeg(_,_,a0,da,e)) -> Some (ArcSeg(p0, pm, a0, da, e))
+                //    | Some(LineSeg _) -> Some (LineSeg(p0, pm))
+                //    | o -> o
+
+                //let right =
+                //    match tryArc r0 rd  e with
+                //    | Some(ArcSeg(_,_,a0,da,e)) -> Some (ArcSeg(pm, p1, a0, da, e))
+                //    | Some(LineSeg _) -> Some (LineSeg(pm, p1))
+                //    | o -> o
+
+                //left, right
+
+
+            | Bezier2(p0, p1, p2) ->
+                let q0 = lerp p0 p1 t
+                let q1 = lerp p1 p2 t
+                PathSegment.tryBezier2 p0 q0 pt, PathSegment.tryBezier2 pt q1 p2
+
+            | Bezier3(p0, p1, p2, p3) ->
+                let q0 = lerp p0 p1 t
+                let q1 = lerp p1 p2 t
+                let q2 = lerp p2 p3 t
+                let m0 = lerp q0 q1 t
+                let m1 = lerp q1 q2 t
+                PathSegment.tryBezier3 p0 q0 m0 pt, PathSegment.tryBezier3 pt m1 q2 p3
+
+
+    /// splits the segment at the given parameter values and returns the list of resulting segments.
+    let splitMany (ts : list<float * V2d>) (s : PathSegment) =
+        match ts with
+        | [] -> [s]
+        | _ ->
+            let rec run (ts : list<float * V2d>) (s : PathSegment) =
+                match ts with
+                | [] -> [s]
+                | (t0, p0) :: ts ->
+                    if t0 <= 0.0 then run ts s
+                    elif t0 >= 1.0 then [s]
+                    else
+                        let ts = ts |> List.map (fun (t,p) -> (t-t0)/(1.0-t0), p)
+                        let l, r = split t0 p0 s
+
+                        let r = 
+                            match r with
+                            | Some r -> run ts r
+                            | None -> []
+                        match l with
+                        | Some l -> l :: r
+                        | None -> r
+            run ts s
+
+
+
+    let splitManyMany (l : PathSegment) (intersections : seq<'a * PathSegment * list<float*float>>) : list<PathSegment> * HashMap<'a, list<PathSegment>> =
+        let intersections = Seq.toList intersections
+
+        let all = 
+            intersections 
+            |> List.collect (fun (id, r, ts) -> ts |> List.map (fun (tl, tr) -> tl, (id, r, tr)))
+            |> List.sortBy fst
+
+        let rec run (splits : HashMap<'a, PathSegment * Map<float, V2d>>) (interactions : list<float * ('a * PathSegment * float)>) (l : PathSegment) =
+            match interactions with
+            | [] -> 
+                [l], splits
+            | (tl, (ri, r, tr)) :: rest ->
+                let l0, l1 = PathSegment.split tl l
+
+                match l1 with 
+                | Some l1 ->
+                
+                    let pt = PathSegment.startPoint l1
+                    let inline update (old : option<PathSegment * Map<float, V2d>>) =
+                        match old with
+                        | Some (s, m) ->
+                            Some (s, Map.add tr pt m)
+                        | None ->
+                            Some(r, Map.ofList [tr, pt])
+                        
+                    let splits = HashMap.alter ri update splits
+                    let rest = rest |> List.map (fun (ti, r) -> (ti - tl) / (1.0 - tl), r)
+
+                    let result, splits = run splits rest l1
+                    match l0 with
+                    | Some l0 -> l0 :: result, splits
+                    | None -> result, splits
+                | None ->
+                    match l0 with
+                    | Some l0 -> [l0], splits
+                    | None -> [], splits
+
+        let self, result = run HashMap.empty all l
+
+        let others = 
+            result |> HashMap.map (fun _ (s, m) ->
+                splitMany (Map.toList m) s
+            )
+
+        self, others
 
     /// assumptions:
     /// 1. the path is not self-intersecting
     let toGeometry (rule : WindingRule) (path : seq<PathSegment>) =
+        let eps = 1E-9
 
         let split (part : Part) =
             match part with
@@ -376,20 +576,15 @@ module Tessellator =
             match s with
             | Bezier3(p0, p1, p2, p3) ->
                 match Coords.bezier3 p0 p1 p2 p3 with
-                | Choice2Of2 t ->
-                    let (l, r) = PathSegment.split t s
-                    match l with
-                    | Some l ->
-                        match r with
-                        | Some r -> Some [l;r]
-                        | None -> Some [l]
-                    | None ->
-                        match r with
-                        | Some r -> Some [r]
-                        | None -> Some []
+                | Choice2Of2 replacement ->
+                    Some replacement
                 | _ ->
                     None
             | Arc(p0, p1, alpha0, dAlpha, ellipse) ->
+
+                let t0 = ellipse.GetPoint(alpha0)
+                let t1 = ellipse.GetPoint(alpha0 + dAlpha)
+
                 let steps = dAlpha / Constant.PiQuarter |> abs |> round |> int |> max 1
                 if steps > 1 then
                     let mutable a0 = alpha0
@@ -399,7 +594,6 @@ module Tessellator =
                         List.init steps (fun i ->
                             let a1 = a0 + step
                             let p1 = if i = steps - 1 then p1 else ellipse.GetPoint a1
-
                             let seg = PathSegment.arcWithPoints p0 p1 a0 step ellipse
 
                             a0 <- a1
@@ -411,8 +605,95 @@ module Tessellator =
                     None
             | _ ->
                 None
-                    
 
+        // get rid of intersections
+        let rec nonIntersecting (result : IndexList<PathSegment>) (bvh : BvhTree2d<Index, PathSegment>) (stack : list<PathSegment>) =
+
+            let replace (i : Index) (repl : seq<PathSegment>) (l : IndexList<PathSegment>) (bvh : BvhTree2d<Index, PathSegment>) =
+                use e = repl.GetEnumerator()
+                if e.MoveNext() then
+                    let _,_,r = IndexList.neighbours i l
+                    let indexAfter =     
+                        match r with
+                        | Some(ri,_) -> fun i -> Index.between i ri
+                        | None -> Index.after
+
+                    let mutable b = BvhTree2d.remove i bvh
+                    let mutable i = i
+                    let mutable l = l |> IndexList.set i e.Current
+                    b <- BvhTree2d.add i (PathSegment.bounds e.Current) e.Current b
+                    while e.MoveNext() do
+                        i <- indexAfter i
+                        l <- IndexList.set i e.Current l
+                        b <- BvhTree2d.add i (PathSegment.bounds e.Current) e.Current b
+
+                    l, b
+                else    
+                    let l1 = IndexList.remove i l
+                    let b1 = BvhTree2d.remove i bvh
+                    l1, b1
+
+            match stack with
+            | s :: stack ->
+                let b = PathSegment.bounds s
+                
+                let intersecting =  
+                    let teps = 1E-7
+                    bvh.GetIntersecting(b, fun _ _ other -> 
+                        let all = PathSegment.intersections 1E-9 s other
+                        let parameters = 
+                            all
+                            |> List.filter (fun (ta, tb) -> (ta >= teps && ta <= 1.0-teps) || (tb >= teps && tb <= 1.0-teps))
+
+                        match parameters with
+                        | [] -> None
+                        | ts -> Some (other, ts)
+                    )
+
+                if HashMap.isEmpty intersecting then
+                    let idx = Index.after result.MaxIndex
+                    let result1 = IndexList.set idx s result
+                    let bvh1 = bvh.Add(idx, b, s)
+                    nonIntersecting result1 bvh1 stack
+                else
+                    
+                    let self, others = splitManyMany s (HashMap.toSeq intersecting |> Seq.map (fun (a,(b,c)) -> a,b,c))
+
+                    //let mine = 
+                    //    intersecting 
+                    //    |> HashMap.toList
+                    //    |> List.collect (fun (o, (_, ts)) -> ts |> List.map fst)
+                    //    |> List.sort
+
+                    //let self = s |> PathSegment.splitMany mine
+                    
+                    let mutable r = result
+                    let mutable b = bvh
+                    for (oi, res) in others do
+                        let (r1, b1) = replace oi res r b
+                        r <- r1
+                        b <- b1
+                        
+
+                    //let mutable r = result
+                    //let mutable b = bvh
+                    //for (oi, (o, ts)) in intersecting do
+                    //    let ts = ts |> List.map snd
+                    //    let res = PathSegment.splitMany ts o
+                    //    let (r1, b1) = replace oi res r b
+                    //    r <- r1
+                    //    b <- b1
+
+
+                    nonIntersecting r b (self @ stack)
+
+            | [] ->
+                result, bvh
+
+        let path1,_ = nonIntersecting IndexList.empty BvhTree2d.empty (Seq.toList path)
+
+
+        // get rid of overlapping triangulations
         let rec nonOverlapping (result : IndexList<Part>) (bvh : BvhTree2d<Index, Part>) (stack : list<PathSegment>) =
             match stack with
             | s :: stack ->
@@ -425,7 +706,7 @@ module Tessellator =
                     let part = Part.ofPathSegment s
                     let b = Part.bounds part
                 
-                    let intersecting =
+                    let intersecting = 
                         bvh.GetIntersecting(b, fun _ _ other -> 
                             if Part.overlaps part other then Some other
                             else None
@@ -473,8 +754,9 @@ module Tessellator =
             | _ ->
                 result |> IndexList.toList
 
-        let cleaned = nonOverlapping IndexList.empty BvhTree2d.empty (Seq.toList path)
+        let cleaned = nonOverlapping IndexList.empty BvhTree2d.empty (Seq.toList path1)
 
+        // find closed sub-paths
         let rec findClosed (exteriorAngle : float) (last : V2d) (current : IndexList<Part>) (stack : list<Part>) =
             match stack with
             | part :: stack ->
@@ -531,67 +813,141 @@ module Tessellator =
                     None
             )
             |> boundary rule
-            |> triangulate WindingRule.EvenOdd
+            |> triangulate WindingRule.Positive
 
         let nonCurved =
             nonCurvedTriangles
             |> toBvh
 
-        let tess = Tess()
-        let polygons = System.Collections.Generic.List<PathSegment * Polygon2d>()
-        for (exterior, path) in parts do
-            let contour = System.Collections.Generic.List<ContourVertex>()
+        let edges, boundary = 
+            let tess = Tess()
+            let polygons = System.Collections.Generic.List<PathSegment * Polygon2d>()
+            for (pi, (exterior, path)) in IndexList.toSeqIndexed parts do
+                if not (IndexList.isEmpty path) then
+                    let contour = System.Collections.Generic.List<ContourVertex>()
+                
+                    let inline approx (c : ContourVertex) (v : V2d) =
+                        Fun.ApproximateEquals(c.Position.X, v.X, eps) && Fun.ApproximateEquals(c.Position.Y, v.Y, eps)
 
-            let inline add (v : V2d) =
-                contour.Add(ContourVertex(Vec3(X = v.X, Y = v.Y)))
 
-            for part in path do
-                if hasPoint nonCurved (Part.startPoint part) && hasPoint nonCurved (Part.endPoint part) then
-                    match part with
-                    | LinePart l ->
-                        add l.P0
-                        add l.P1
-                    | PolygonalPart(s, p) ->
-                        polygons.Add(s, p)
-                        match s with
-                        | Line(p0, p1) ->
-                            add p0
-                            add p1
-                        | Bezier2(p0, p1, p2) ->
-                            add p0
-                            if containsPoint nonCurved p1 then add p1
-                            add p2
-                        | Bezier3(p0, p1, p2, p3) ->
-                            add p0
-                            if containsPoint nonCurved p1 then add p1
-                            if containsPoint nonCurved p2 then add p2
-                            add p3
-                        | Arc(p0, p2, alpha0, dAlpha, ellipse) ->
-                            let p1 = ellipse.GetControlPoint(alpha0, alpha0 + dAlpha)
-                            add p0 
-                            if containsPoint nonCurved p1 then add p1
-                            add p2
-                        
-            if contour.Count > 0 then
-                tess.AddContour(contour)
+                    let add (v : V2d) (s : seq<Index * int>) =
+                        let ks = s |> Seq.map (fun (a,b) -> pi,a,b) |> Set.ofSeq
+                        contour.Add(ContourVertex(Vec3(X = v.X, Y = v.Y), ks))
+
+                    let mutable li = path.MaxIndex
+                    let mutable lastPart = Unchecked.defaultof<_>
+
+                    //let (s0, part) = Seq.head (IndexList.toSeqIndexed path)
+                    //let p0 = Part.startPoint part
+                    //add p0 [li,1; s0,0]
+
+
+                    for (si, part) in IndexList.toSeqIndexed path do
+                        match part with
+                        | LinePart l ->
+                            add l.P0 [li,1; si,0]
+                            //add l.P1 si [si,1; si,0]
+                        | PolygonalPart(s, p) ->
+                            match s with
+                            | Line(p0, p1) ->
+                                add p0 [li,1; si,0]
+                                //add p1 si 1
+
+                            | Bezier2(p0, p1, p2) ->
+                                add p0 [li,1; si,0]
+                                if containsPoint nonCurved p1 then add p1 []
+                                //add p2 si 1
+                            | Bezier3(p0, p1, p2, p3) ->
+                                add p0 [li,1; si,0]
+                                if containsPoint nonCurved p1 then add p1 []
+                                if containsPoint nonCurved p2 then add p2 []
+                                //add p3 si 1
+                            | Arc(p0, p2, alpha0, dAlpha, ellipse) ->
+                                let p1 = ellipse.GetControlPoint(alpha0, alpha0 + dAlpha)
+                                add p0 [li,1; si,0]
+                                if containsPoint nonCurved p1 then add p1 []
+                                //add p2 si 1
+                        li <- si
+                        lastPart <- part
+
+                    contour.Add(contour.[0])
+
+                    if contour.Count > 0 then
+                        tess.AddContour(contour)
 
              
-        tess.Tessellate(WindingRule.EvenOdd, ElementType.Polygons, 3)
+            let interpolate _ (l : obj[]) _ =
+                if l.Length = 1 then l.[0]
+                else l |> Seq.map unbox<Set<Index*Index*int>> |> Set.unionMany :> obj
+
+            tess.Tessellate(rule, ElementType.BoundaryContours, combineCallback = CombineCallback(interpolate))
+
+            let mutable edges = Set.empty
+            let res = Array.zeroCreate tess.ElementCount
+            let mutable ei = 0
+            for i in 0 .. tess.ElementCount - 1 do  
+                let o = tess.Elements.[ei]
+                let c = tess.Elements.[ei+1]
+                let arr = Array.zeroCreate c
+
+                let mutable last = tess.Vertices.[o + c-1]
+                let mutable vi = o
+                for j in 0 .. c - 1 do
+                    let v = tess.Vertices.[vi]
+
+                    let i0 = last.Data |> unbox<Set<Index * Index * int>>
+                    let i1 = v.Data |> unbox<Set<Index * Index * int>>
+
+                    for l in i0 do
+                        for r in i1 do
+                            edges <- edges |> Set.add (l, r)
+
+                    arr.[j] <- V2d(v.Position.X, v.Position.Y)
+                    vi <- vi + 1
+                    last <- v
+
+                ei <- ei + 2
+                res.[i] <- arr
+            edges, res
+
+
+        let polygons = System.Collections.Generic.List()
+        for (pi, (_,path)) in IndexList.toSeqIndexed parts do
+            for (si, s) in IndexList.toSeqIndexed path do
+                match s with
+                | PolygonalPart(s, _) ->
+                    let p0 = PathSegment.startPoint s
+                    let p1 = PathSegment.endPoint s
+                    if hasPoint nonCurved p0 && hasPoint nonCurved p1 then
+                    //if Set.contains ((pi, si, 0),(pi, si, 1)) edges then
+                        polygons.Add s
+                | _ ->
+                    ()
+
+
+
+
+
+
+        let pos, idx = 
+            boundary
+            |> triangulate WindingRule.Positive
+            //tess.Elements |> Array.map (fun i ->
+            //    let v = tess.Vertices.[i]
+            //    V3f(v.Position.X, v.Position.Y, 0.0)
+            //) |> System.Collections.Generic.List
 
         let positions = 
-            tess.Elements |> Array.map (fun i ->
-                let v = tess.Vertices.[i]
-                V3f(v.Position.X, v.Position.Y, 0.0)
-            ) |> System.Collections.Generic.List
+            idx |> Array.map (fun i -> V3f(V2f pos.[i], 0.0f)) |> System.Collections.Generic.List
 
         let coords = 
             Array.init positions.Count (fun _ -> V4f.Zero) |> System.Collections.Generic.List
 
-        for (seg, _) in polygons do 
-            let inline fw (kind : int) (c : V3d) = V4f(float32 c.X, float32 c.Y, float32 c.Z, float32 kind)
-            let inline bw (kind : int) (c : V3d) = V4f(float32 -c.X, float32 -c.Y, float32 c.Z, float32 kind)
+        for seg in polygons do 
             match seg with
-            | Line _ -> ()
+            | Line _ -> 
+                ()
+
             | Bezier2(p0, p1, p2) ->
                 positions.AddRange [| V3f(V2f p0, 0.0f); V3f(V2f p1, 0.0f); V3f(V2f p2, 0.0f) |]
 
@@ -599,7 +955,6 @@ module Tessellator =
                     coords.AddRange [| V4f(0,0,-1,2); V4f(-0.5, 0.0,-1.0, 2.0); V4f(-1,1,-1,2)|]
                 else
                     coords.AddRange [|V4f(0,0,1,3); V4f(0.5, 0.0, 1.0,3.0); V4f(1,1,1,3)|]
-
 
             | Arc(p0, p2, alpha0, dAlpha, ellipse) ->   
                 let uv2World = M33d.FromCols(V3d(ellipse.Axis0, 0.0), V3d(ellipse.Axis1, 0.0), V3d(ellipse.Center, 1.0))
@@ -617,8 +972,27 @@ module Tessellator =
                     coords.AddRange [V4f(c0.X, c0.Y,1.0, 5.0); V4f(c1.X, c1.Y,1.0, 5.0); V4f(c2.X, c2.Y,1.0,5.0)]
                     
 
-            | _ ->
-                failwith ""
+            | Bezier3(p0, p1, p2, p3) ->
+                match Coords.bezier3 p0 p1 p2 p3 with
+                | Choice1Of2(k, c0, c1, c2, c3) ->
+                    
+                    let c1Inside = c1.X*c1.X*c1.X - c1.Y*c1.Z < 0.0
+                    let c2Inside = c2.X*c2.X*c2.X - c2.Y*c2.Z < 0.0
+
+                    let inline flip (v : V3d) = V3d(-v.XY, v.Z)
+
+                    positions.AddRange [ V3f(V2f p0, 0.0f); V3f(V2f p1, 0.0f); V3f(V2f p2, 0.0f) ]
+                    positions.AddRange [ V3f(V2f p0, 0.0f); V3f(V2f p2, 0.0f); V3f(V2f p3, 0.0f) ]
+
+                    if containsPoint nonCurved p1 <> c1Inside then
+                        coords.AddRange [V4f(flip c0, float k); V4f(flip c1, float k); V4f(flip c2,float k)]
+                        coords.AddRange [V4f(flip c0, float k); V4f(flip c2, float k); V4f(flip c3,float k)]
+                    else
+                        coords.AddRange [V4f(c0, float k); V4f(c1, float k); V4f(c2,float k)]
+                        coords.AddRange [V4f(c0, float k); V4f(c2, float k); V4f(c3,float k)]
+                        
+                | _ -> 
+                    failwith "should have been subdivided"
 
 
 
