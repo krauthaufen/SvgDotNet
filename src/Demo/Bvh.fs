@@ -31,7 +31,7 @@ module internal BvhNode3d =
         | Node(_,c,_,_,_) -> c
 
     let cost (invVolume : float) (lBox : Box3d) (lCnt : int) (rBox : Box3d) (rCnt : int) =
-        let i = Box3d.Intersection(lBox, rBox)
+        let i = Box.Intersection(lBox, rBox)
         let iVol = if i.IsValid then i.Volume * invVolume else 0.0
         let lVol = lBox.Volume * invVolume
         let rVol = rBox.Volume * invVolume
@@ -191,15 +191,15 @@ module internal BvhNode3d =
                     Leaf(overflowCount, b, vs)
 
         | Node(bestCost, _, b, l, r) ->
-            let nb = Box3d.Union(b, bounds)
+            let nb = Box.Union(b, bounds)
 
             let lb = getBounds l
             let rb = getBounds r
             let lc = count l
             let rc = count r
             let invVol = 1.0 / nb.Volume
-            let lCost = cost invVol (Box3d.Union(lb, bounds)) (1 + lc) rb rc
-            let rCost = cost invVol lb lc (Box3d.Union(rb, bounds)) (1 + rc)
+            let lCost = cost invVol (Box.Union(lb, bounds)) (1 + lc) rb rc
+            let rCost = cost invVol lb lc (Box.Union(rb, bounds)) (1 + rc)
 
             if lCost < rCost then
                 // add left
@@ -213,7 +213,7 @@ module internal BvhNode3d =
                     let lb = getBounds l
                     let lc = count l
                     let cc = cost invVol lb lc rb rc
-                    let nb = Box3d.Union(lb, rb)
+                    let nb = Box.Union(lb, rb)
                     Node(min bestCost cc, lc + rc, nb, l, r)
             else
                 if rCost > 2.0 * bestCost then  
@@ -226,7 +226,7 @@ module internal BvhNode3d =
                     let rb = getBounds r
                     let rc = count r
                     let cc = cost invVol lb lc rb rc
-                    let nb = Box3d.Union(lb, rb)
+                    let nb = Box.Union(lb, rb)
                     Node(min bestCost cc, lc + rc, nb, l, r)
             
     let rec tryRemove (limit : int) (key : 'K) (bounds : Box3d) (node : BvhNode3d<'K, 'V>) =
@@ -257,7 +257,7 @@ module internal BvhNode3d =
                         let rc = count r
                         let lb = getBounds l
                         let rb = getBounds r
-                        let o = Box3d.Union(lb, rb)
+                        let o = Box.Union(lb, rb)
                         let cnt = lc + rc
                         if cnt <= limit then
                             let values = Seq.append (toSeq l) (toSeq r) |> HashMap.OfSeqV
@@ -276,7 +276,7 @@ module internal BvhNode3d =
                             let rc = count r
                             let lb = getBounds l
                             let rb = getBounds r
-                            let o = Box3d.Union(lb, rb)
+                            let o = Box.Union(lb, rb)
                             let cnt = lc + rc
                             if cnt <= limit then
                                 let values = Seq.append (toSeq l) (toSeq r) |> HashMap.OfSeqV
@@ -448,7 +448,7 @@ module internal BvhNode2d =
         | Node(_,c,_,_,_) -> c
 
     let cost (invArea : float) (lBox : Box2d) (lCnt : int) (rBox : Box2d) (rCnt : int) =
-        let i = Box2d.Intersection(lBox, rBox)
+        let i = Box.Intersection(lBox, rBox)
         let iVol = if i.IsValid then i.Area * invArea else 0.0
         let lVol = lBox.Area * invArea
         let rVol = rBox.Area * invArea
@@ -610,15 +610,15 @@ module internal BvhNode2d =
                     Leaf(overflowCount, b, vs)
 
         | Node(bestCost, _, b, l, r) ->
-            let nb = Box2d.Union(b, bounds)
+            let nb = Box.Union(b, bounds)
 
             let lb = getBounds l
             let rb = getBounds r
             let lc = count l
             let rc = count r
             let invVol = 1.0 / nb.Area
-            let lCost = cost invVol (Box2d.Union(lb, bounds)) (1 + lc) rb rc
-            let rCost = cost invVol lb lc (Box2d.Union(rb, bounds)) (1 + rc)
+            let lCost = cost invVol (Box.Union(lb, bounds)) (1 + lc) rb rc
+            let rCost = cost invVol lb lc (Box.Union(rb, bounds)) (1 + rc)
 
             if lCost < rCost then
                 // add left
@@ -632,7 +632,7 @@ module internal BvhNode2d =
                     let lb = getBounds l
                     let lc = count l
                     let cc = cost invVol lb lc rb rc
-                    let nb = Box2d.Union(lb, rb)
+                    let nb = Box.Union(lb, rb)
                     Node(min bestCost cc, lc + rc, nb, l, r)
             else
                 if rCost > 2.0 * bestCost then  
@@ -645,7 +645,7 @@ module internal BvhNode2d =
                     let rb = getBounds r
                     let rc = count r
                     let cc = cost invVol lb lc rb rc
-                    let nb = Box2d.Union(lb, rb)
+                    let nb = Box.Union(lb, rb)
                     Node(min bestCost cc, lc + rc, nb, l, r)
             
     let rec tryRemove (limit : int) (key : 'K) (bounds : Box2d) (node : BvhNode2d<'K, 'V>) =
@@ -676,7 +676,7 @@ module internal BvhNode2d =
                         let rc = count r
                         let lb = getBounds l
                         let rb = getBounds r
-                        let o = Box2d.Union(lb, rb)
+                        let o = Box.Union(lb, rb)
                         let cnt = lc + rc
                         if cnt <= limit then
                             let values = Seq.append (toSeq l) (toSeq r) |> HashMap.OfSeqV
@@ -695,7 +695,7 @@ module internal BvhNode2d =
                             let rc = count r
                             let lb = getBounds l
                             let rb = getBounds r
-                            let o = Box2d.Union(lb, rb)
+                            let o = Box.Union(lb, rb)
                             let cnt = lc + rc
                             if cnt <= limit then
                                 let values = Seq.append (toSeq l) (toSeq r) |> HashMap.OfSeqV

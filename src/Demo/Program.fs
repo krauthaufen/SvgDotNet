@@ -1355,9 +1355,9 @@ let main argv =
 
 
 
-    //let path = @"C:\Users\Schorsch\Development\SvgDotNet\data\Example.svg" //Path.combine [__SOURCE_DIRECTORY__; ".."; ".."; "data"; "Example.svg"] //@"C:\Users\Schorsch\Downloads\Example_svg.svg"
+    let path = @"C:\Users\Schorsch\Development\aardvark.rendering\data\logo\aardvark.svg"
 
-    //let shapes = readShape path |> cval
+    let shapes = readShape path |> cval
 
 
 
@@ -1372,14 +1372,14 @@ let main argv =
     let view = initialView |> DefaultCameraController.control win.Mouse win.Keyboard win.Time
     let proj = win.Sizes |> AVal.map (fun s -> Frustum.perspective 60.0 0.1 100.0 (float s.X / float s.Y))
 
-    //let trafo = 
-    //    shapes |> AVal.map (fun shapes ->
-    //        let bb = shapes.bounds
-    //        let off = V3d(-bb.Center.XY, 0.0)
-    //        let scale = 4.0 / bb.Size.NormMax
-    //        Trafo3d.Translation off *
-    //        Trafo3d.Scale(scale, -scale, 1.0)
-    //    )
+    let trafo = 
+        shapes |> AVal.map (fun shapes ->
+            let bb = shapes.bounds
+            let off = V3d(-bb.Center.XY, 0.0)
+            let scale = 4.0 / bb.Size.NormMax
+            Trafo3d.Translation off *
+            Trafo3d.Scale(scale, -scale, 1.0)
+        )
 
     let fill = cval FillMode.Fill
 
@@ -1402,14 +1402,32 @@ let main argv =
             ()
     )
 
-    
+    let boxCCW (b : Box2d) =
+        [
+            PathSegment.line (V2d(b.Min.X, b.Min.Y)) (V2d(b.Max.X, b.Min.Y))
+            PathSegment.line (V2d(b.Max.X, b.Min.Y)) (V2d(b.Max.X, b.Max.Y))
+            PathSegment.line (V2d(b.Max.X, b.Max.Y)) (V2d(b.Min.X, b.Max.Y))
+            PathSegment.line (V2d(b.Min.X, b.Max.Y)) (V2d(b.Min.X, b.Min.Y))
+        ]
+    let boxCW (b : Box2d) =
+        [
+            PathSegment.line (V2d(b.Min.X, b.Min.Y)) (V2d(b.Min.X, b.Max.Y))
+            PathSegment.line (V2d(b.Min.X, b.Max.Y)) (V2d(b.Max.X, b.Max.Y))
+            PathSegment.line (V2d(b.Max.X, b.Max.Y)) (V2d(b.Max.X, b.Min.Y))
+            PathSegment.line (V2d(b.Max.X, b.Min.Y)) (V2d(b.Min.X, b.Min.Y))
+        ]
+
+
     let hull, real =
-        Tessellator.Tessellator.toGeometry LibTessDotNet.Double.WindingRule.NonZero [
+        Tessellator.Tessellator.toGeometry LibTessDotNet.Double.WindingRule.EvenOdd [
 
+            //yield! boxCCW (Box2d.FromCenterAndSize(V2d.Zero, V2d(0.7, 0.1)))
+            //yield! boxCW (Box2d.FromCenterAndSize(V2d.Zero, V2d(0.1, 0.7)))
+            
             PathSegment.arc 0.0 Constant.PiTimesTwo (Ellipse2d(V2d.Zero, 0.5*V2d.IO, 0.5*V2d.OI))
-            //PathSegment.arc 0.0 Constant.PiTimesTwo (Ellipse2d(V2d.Zero, V2d.IO, 0.2*V2d.OI))
+            PathSegment.arc 0.0 Constant.PiTimesTwo (Ellipse2d(V2d.Zero, V2d.IO, 0.2*V2d.OI))
 
-            //PathSegment.arcSegment (V2d(-1.0, -0.1)) (V2d(0.0, -1.0)) (V2d(1.0, -0.1))
+            ////PathSegment.arcSegment (V2d(-1.0, -0.1)) (V2d(0.0, -1.0)) (V2d(1.0, -0.1))
 
             
             PathSegment.bezier3 (V2d(-1.0, -0.1)) (V2d(-0.4,1.7)) (V2d(0.4, -0.4)) (V2d(1.0, -0.1))
@@ -1430,34 +1448,44 @@ let main argv =
 
    
     let sg =
-        Sg.ofList [
+        //Sg.ofList [
             
-            Sg.ofList [
-                Sg.ofIndexedGeometry real
-            ]
-            |> Sg.shader {
-                do! Shader.pathVertex
-                do! DefaultSurfaces.constantColor C4f.Black
-                do! Shader.pathFragment
-            }
-            //Sg.ofList [
-            //    Sg.ofIndexedGeometry hull
-            //]
-            //|> Sg.shader {
-            //    do! Shader.pathVertex
-            //    do! DefaultSurfaces.constantColor (C4f(1.0f, 1.0f, 1.0f, 0.5f))
-            //    do! Shader.pathFragment
-            //}
-            //|> Sg.blendMode (AVal.constant BlendMode.Blend)
-            //|> Sg.depthTest (AVal.constant DepthTestMode.None)
-            //|> Sg.pass (RenderPass.after "" RenderPassOrder.Arbitrary RenderPass.main)
-        ]
-        |> Sg.uniform "LineWidth" (AVal.constant 5.0)
-        //Sg.shape shapes
-        //|> Sg.trafo trafo
+        //    Sg.ofList [
+        //        Sg.ofIndexedGeometry real
+        //    ]
+        //    |> Sg.shader {
+        //        do! Shader.pathVertex
+        //        do! DefaultSurfaces.constantColor C4f.Black
+        //        do! Shader.pathFragment
+        //    }
+        //    //Sg.ofList [
+        //    //    Sg.ofIndexedGeometry hull
+        //    //]
+        //    //|> Sg.shader {
+        //    //    do! Shader.pathVertex
+        //    //    do! DefaultSurfaces.constantColor (C4f(1.0f, 1.0f, 1.0f, 0.5f))
+        //    //    do! Shader.pathFragment
+        //    //}
+        //    //|> Sg.blendMode (AVal.constant BlendMode.Blend)
+        //    //|> Sg.depthTest (AVal.constant DepthTestMode.None)
+        //    //|> Sg.pass (RenderPass.after "" RenderPassOrder.Arbitrary RenderPass.main)
+        //]
+        //|> Sg.uniform "LineWidth" (AVal.constant 5.0)
+        Sg.shape shapes
+        |> Sg.trafo trafo
         |> Sg.fillMode fill
         |> Sg.uniform "Fill" (fill |> AVal.map ((=) FillMode.Fill))
         |> Sg.transform (Trafo3d.RotationX(Constant.PiHalf))
+
+        |> Sg.andAlso (
+            Sg.box' C4b.White Box3d.Unit
+            |> Sg.translate 0.5 -0.5 -1.0
+            |> Sg.shader {
+                do! DefaultSurfaces.trafo
+                do! DefaultSurfaces.simpleLighting
+            }
+        )
+
         |> Sg.viewTrafo (view |> AVal.map CameraView.viewTrafo)
         |> Sg.projTrafo (proj |> AVal.map Frustum.projTrafo)
 

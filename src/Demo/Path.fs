@@ -283,9 +283,12 @@ module Tessellator =
                 tess.AddContour(vertices)
 
             tess.Tessellate(rule, ElementType.Polygons, 3)
-            let positions = tess.Vertices |> Array.map (fun v -> V2d(v.Position.X, v.Position.Y))
-            let index = tess.Elements
-            positions, index
+            if tess.ElementCount > 0 then
+                let positions = tess.Vertices |> Array.map (fun v -> V2d(v.Position.X, v.Position.Y))
+                let index = tess.Elements
+                positions, index
+            else
+                [||], [||]
 
 
     
@@ -550,6 +553,12 @@ module Tessellator =
     /// assumptions:
     /// 1. the path is not self-intersecting
     let toGeometry (rule : WindingRule) (path : seq<PathSegment>) =
+        let rule = 
+            match rule with
+            | WindingRule.Positive -> WindingRule.Negative
+            | WindingRule.Negative -> WindingRule.Positive
+            | r -> r
+
         let eps = 1E-9
 
         let split (part : Part) =
@@ -804,7 +813,7 @@ module Tessellator =
         let parts = findClosed 0.0 V2d.NaN IndexList.empty cleaned |> IndexList.ofList
 
         let nonCurvedTriangles =
-            parts |> Seq.choose (fun (_,path) ->
+            parts |> Seq.choose (fun (angle,path) ->
                 if path.Count > 0 then
                     let first = Seq.head path
                     let rest = path |> Seq.map (fun p -> Part.endPoint p)
@@ -932,10 +941,6 @@ module Tessellator =
         let pos, idx = 
             boundary
             |> triangulate WindingRule.Positive
-            //tess.Elements |> Array.map (fun i ->
-            //    let v = tess.Vertices.[i]
-            //    V3f(v.Position.X, v.Position.Y, 0.0)
-            //) |> System.Collections.Generic.List
 
         let positions = 
             idx |> Array.map (fun i -> V3f(V2f pos.[i], 0.0f)) |> System.Collections.Generic.List

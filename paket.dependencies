@@ -7,13 +7,13 @@ nuget Aardvark.Base                         ~> 5.0.0-prerelease
 nuget Aardvark.Base.Incremental             ~> 5.0.0-prerelease
 nuget Aardvark.Base.FSharp                  ~> 5.0.0-prerelease
                                             
-nuget Aardvark.Base.Rendering               ~> 5.0.0-prerelease0005
-nuget Aardvark.SceneGraph                   ~> 5.0.0-prerelease0005
-nuget Aardvark.SceneGraph.IO                ~> 5.0.0-prerelease0005
-nuget Aardvark.Application.Slim             ~> 5.0.0-prerelease0005
-nuget Aardvark.Application.Slim.GL          ~> 5.0.0-prerelease0005
-nuget Aardvark.Application.Slim.Vulkan      ~> 5.0.0-prerelease0005
-nuget Aardvark.Rendering.Text               ~> 5.0.0-prerelease0005
+nuget Aardvark.Base.Rendering               ~> 5.0.0-prerelease0006
+nuget Aardvark.SceneGraph                   ~> 5.0.0-prerelease0006
+nuget Aardvark.SceneGraph.IO                ~> 5.0.0-prerelease0006
+nuget Aardvark.Application.Slim             ~> 5.0.0-prerelease0006
+nuget Aardvark.Application.Slim.GL          ~> 5.0.0-prerelease0006
+nuget Aardvark.Application.Slim.Vulkan      ~> 5.0.0-prerelease0006
+nuget Aardvark.Rendering.Text               ~> 5.0.0-prerelease0006
                                             
 
 
